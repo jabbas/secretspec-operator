@@ -1,0 +1,11 @@
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: v11-prefix-hex
+  namespace: test
+spec:
+  fields:
+    - name: access-key-id
+      prefix: GK
+      length: 24
+      charset: hex

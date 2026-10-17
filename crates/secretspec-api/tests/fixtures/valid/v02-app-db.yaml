@@ -1,0 +1,15 @@
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: v02-app-db
+  namespace: test
+spec:
+  deletionPolicy: Retain
+  rotation:
+    interval: 90d
+  secret:
+    type: Opaque
+  data:
+    username: app
+  fields:
+    - name: password

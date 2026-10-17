@@ -1,0 +1,10 @@
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: v07-basic-auth-k8s-type
+  namespace: test
+spec:
+  secret:
+    type: kubernetes.io/basic-auth
+  basicAuth:
+    username: admin

@@ -1,0 +1,14 @@
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: v16-require-sum-equals-default
+  namespace: test
+spec:
+  fields:
+    - name: password
+      charset: ascii
+      require:
+        lower: 8
+        upper: 8
+        digits: 8
+        symbols: 8
