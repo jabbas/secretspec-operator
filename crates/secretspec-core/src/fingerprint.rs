@@ -16,10 +16,12 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
+use hmac::{Hmac, KeyInit, Mac};
 use secretspec_api::resolve::{
     BytesParams, CharsParams, Generator, ResolvedKind, ResolvedSpec, SshAlgorithmParams,
 };
 use secretspec_api::v1alpha1::{EcdsaCurve, Encoding};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::value::SecretValue;
@@ -118,15 +120,19 @@ impl fmt::Display for Fingerprint {
 /// A fingerprint annotation, a slot or a fingerprint could not be parsed.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum FingerprintParseError {
-    /// The annotation is not a JSON object of strings.
-    #[error("fingerprints annotation is not a JSON object of strings: {0}")]
+    /// The annotation is not JSON or not a JSON object.
+    #[error("fingerprints annotation is not a JSON object: {0}")]
     Json(String),
     /// Not one of the known slot forms, or the field name is not a valid key name.
     #[error("unknown fingerprint slot {0:?}")]
     InvalidSlot(String),
-    /// Not 64 lowercase hex characters.
+    /// Not 64 lowercase hex characters (or not a string at all).
     #[error("invalid fingerprint {0:?}: expected 64 lowercase hex characters")]
     InvalidFingerprint(String),
+    /// An entry with an unknown key whose value is not a string; it cannot be
+    /// preserved and is dropped.
+    #[error("dropped unknown fingerprints entry {0:?}: value is not a string")]
+    InvalidUnknownEntry(String),
 }
 
 /// Canonical text of a characters-mode slot (`field/<name>` or
@@ -169,15 +175,37 @@ pub fn canonical_ssh(p: &SshAlgorithmParams) -> String {
 }
 
 /// Canonical text of the `basic-auth/htpasswd` slot. Unlike the others it
-/// depends on a generated value (the password), so it cannot be computed
-/// before generation.
-pub fn canonical_htpasswd(username: &str, password: &SecretValue, cost: u32) -> String {
+/// depends on generated values (the password and the stored htpasswd line), so
+/// it cannot be computed before generation.
+///
+/// `htpasswd_line` is the stored line `<username>:<bcrypt hash>` exactly as it
+/// is in the Secret data (no trailing newline). The password enters only as
+/// `HMAC-SHA256(key = htpasswd_line, message = password)`: the annotation is
+/// readable by people who cannot read Secret data, and without the
+/// salt-bearing line the value cannot be used to test password guesses.
+pub fn canonical_htpasswd(
+    username: &str,
+    password: &SecretValue,
+    htpasswd_line: &SecretValue,
+    cost: u32,
+) -> String {
     format!(
-        "{HEADER}\nslot={}\nusername={}\npassword-sha256={}\ncost={cost}\n",
+        "{HEADER}\nslot={}\nusername={}\npassword-mac={}\ncost={cost}\n",
         Slot::BasicAuthHtpasswd,
         hex::encode(username.as_bytes()),
-        hex::encode(Sha256::digest(password.expose())),
+        hex::encode(password_mac(htpasswd_line.expose(), password.expose())),
     )
+}
+
+/// `HMAC-SHA256(key, message)`.
+fn password_mac(key: &[u8], message: &[u8]) -> Vec<u8> {
+    // HMAC accepts keys of any length (longer keys are hashed first), so
+    // `new_from_slice` cannot fail for `Hmac<Sha256>`.
+    let Ok(mut mac) = <Hmac<Sha256> as KeyInit>::new_from_slice(key) else {
+        unreachable!("HMAC-SHA256 accepts keys of any length")
+    };
+    mac.update(message);
+    mac.finalize().into_bytes().to_vec()
 }
 
 /// SHA-256 of the canonical text, as 64 lowercase hex characters.
@@ -238,33 +266,77 @@ fn curve_wire(curve: EcdsaCurve) -> &'static str {
 
 /// The content of the `secretspec.jabbas.eu/fingerprints` annotation.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct FingerprintMap(pub BTreeMap<Slot, Fingerprint>);
+pub struct FingerprintMap {
+    /// Fingerprints of the slots this version knows.
+    pub slots: BTreeMap<Slot, Fingerprint>,
+    /// Entries whose key is not a slot this version knows (for example one
+    /// written by a newer operator), kept verbatim so that a writer carries
+    /// them through instead of dropping them.
+    pub unknown: BTreeMap<String, String>,
+}
+
+/// The result of reading a fingerprints annotation that is a JSON object.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ParsedAnnotation {
+    /// Every usable entry: valid known slots and preserved unknown ones.
+    pub map: FingerprintMap,
+    /// One entry per known slot whose value was not a valid fingerprint (that
+    /// slot is absent from `map`), and per unknown key whose value was not a
+    /// string (dropped).
+    pub problems: Vec<FingerprintParseError>,
+}
 
 impl FingerprintMap {
-    /// Compact JSON object `{"<slot>":"<hex>",...}`, keys sorted by their
-    /// string form.
+    /// Compact JSON object `{"<slot>":"<hex>",...}` of the known slots and the
+    /// preserved unknown entries, keys sorted by their string form. A known
+    /// slot wins over an unknown entry with the same key.
     pub fn to_annotation(&self) -> String {
-        let sorted: BTreeMap<String, &str> = self
-            .0
+        let mut sorted: BTreeMap<String, &str> = self
+            .unknown
             .iter()
-            .map(|(slot, fingerprint)| (slot.to_string(), fingerprint.as_str()))
+            .map(|(key, value)| (key.clone(), value.as_str()))
             .collect();
+        sorted.extend(
+            self.slots
+                .iter()
+                .map(|(slot, fingerprint)| (slot.to_string(), fingerprint.as_str())),
+        );
         // A map of strings always serializes; the fallback is unreachable.
         serde_json::to_string(&sorted).unwrap_or_else(|_| "{}".to_owned())
     }
 
-    /// Parses an annotation written by [`FingerprintMap::to_annotation`].
+    /// Reads an annotation tolerantly (normative rules in
+    /// `docs/fingerprints.md`): a key that is not a known slot is kept in
+    /// [`FingerprintMap::unknown`]; a known slot whose value is not a valid
+    /// fingerprint is left out and reported in [`ParsedAnnotation::problems`].
+    /// One bad entry never invalidates the others.
     ///
     /// # Errors
-    /// [`FingerprintParseError`] if the text is not a JSON object of strings,
-    /// a key is not a known slot, or a value is not 64 lowercase hex characters.
-    pub fn from_annotation(s: &str) -> Result<Self, FingerprintParseError> {
-        let raw: BTreeMap<String, String> =
+    /// [`FingerprintParseError::Json`] only if the text is not JSON or not a
+    /// JSON object.
+    pub fn from_annotation(s: &str) -> Result<ParsedAnnotation, FingerprintParseError> {
+        let raw: serde_json::Map<String, Value> =
             serde_json::from_str(s).map_err(|e| FingerprintParseError::Json(e.to_string()))?;
-        let mut map = BTreeMap::new();
-        for (slot, fingerprint) in raw {
-            map.insert(slot.parse()?, Fingerprint::parse(&fingerprint)?);
+        let mut parsed = ParsedAnnotation::default();
+        for (key, value) in raw {
+            match (key.parse::<Slot>(), value) {
+                (Ok(slot), Value::String(text)) => match Fingerprint::parse(&text) {
+                    Ok(fingerprint) => {
+                        parsed.map.slots.insert(slot, fingerprint);
+                    }
+                    Err(e) => parsed.problems.push(e),
+                },
+                (Ok(_), other) => parsed
+                    .problems
+                    .push(FingerprintParseError::InvalidFingerprint(other.to_string())),
+                (Err(_), Value::String(text)) => {
+                    parsed.map.unknown.insert(key, text);
+                }
+                (Err(_), _) => parsed
+                    .problems
+                    .push(FingerprintParseError::InvalidUnknownEntry(key)),
+            }
         }
-        Ok(Self(map))
+        Ok(parsed)
     }
 }

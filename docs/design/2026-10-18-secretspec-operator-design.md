@@ -312,7 +312,7 @@ Printer columns: `Ready`, `Kind`, `Next Rotation`, `Age`.
   - `secretspec.jabbas.eu/spec-name: <name>`
   - plus `spec.secret.labels`
 - **Annotations:**
-  - `secretspec.jabbas.eu/fingerprints`: a JSON map from generation *slot* to the SHA-256 hex of that slot's resolved generation parameters. Slots are stable logical names independent of Secret key names (e.g. `field/password`, `ssh/keypair`, `basic-auth/password`, `basic-auth/htpasswd`), so renaming `keys.*` can move a value without regenerating it. The exact canonical format is frozen in `docs/fingerprints.md` (API freeze milestone).
+  - `secretspec.jabbas.eu/fingerprints`: a JSON map from generation *slot* to the SHA-256 hex of that slot's resolved generation parameters. Slots are stable logical names independent of Secret key names (e.g. `field/password`, `ssh/keypair`, `basic-auth/password`, `basic-auth/htpasswd`), so renaming `keys.*` can move a value without regenerating it. The `basic-auth/htpasswd` fingerprint never contains a plain hash of the password: it covers `HMAC-SHA256(key = stored htpasswd line, message = password)`, because annotations are visible to people who cannot read Secret data. Readers are tolerant: unknown slots are ignored but preserved by writers, and an invalid entry invalidates only its own slot. The exact canonical format and the reading rules are frozen in `docs/fingerprints.md` (API freeze milestone).
   - `secretspec.jabbas.eu/generated-at`: RFC 3339 time of the last full generation. This is the rotation anchor.
   - `secretspec.jabbas.eu/spec-uid`: the UID of the SecretSpec that currently owns the Secret.
   - plus `spec.secret.annotations`

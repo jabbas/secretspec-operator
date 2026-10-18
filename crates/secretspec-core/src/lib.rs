@@ -6,7 +6,7 @@ pub mod fingerprint;
 pub mod value;
 
 pub use fingerprint::{
-    Fingerprint, FingerprintMap, FingerprintParseError, Slot, canonical_bytes, canonical_chars,
-    canonical_htpasswd, canonical_ssh, expected_fingerprints, fingerprint_of,
+    Fingerprint, FingerprintMap, FingerprintParseError, ParsedAnnotation, Slot, canonical_bytes,
+    canonical_chars, canonical_htpasswd, canonical_ssh, expected_fingerprints, fingerprint_of,
 };
 pub use value::SecretValue;

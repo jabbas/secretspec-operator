@@ -14,9 +14,14 @@ use secretspec_api::resolve::{
 };
 use secretspec_api::v1alpha1::{DeletionPolicy, EcdsaCurve, Encoding};
 use secretspec_core::{
-    Fingerprint, FingerprintMap, SecretValue, Slot, canonical_bytes, canonical_chars,
-    canonical_htpasswd, canonical_ssh, expected_fingerprints, fingerprint_of,
+    Fingerprint, FingerprintMap, FingerprintParseError, ParsedAnnotation, SecretValue, Slot,
+    canonical_bytes, canonical_chars, canonical_htpasswd, canonical_ssh, expected_fingerprints,
+    fingerprint_of,
 };
+
+/// Golden vector 10: `basic-auth/password` with every default.
+const BASIC_PASSWORD_DEFAULT: &str =
+    "0e8fee5d13ec3fe16a5615c6b3c29a303047c378d6558fc859ef3c7234b7f4c4";
 
 const ALNUM: &str = "303132333435363738394142434445464748494a4b4c4d4e4f505152535455565758595a6162636465666768696a6b6c6d6e6f707172737475767778797a";
 
@@ -88,8 +93,21 @@ fn basic_password_canonical() -> String {
     canonical_chars(&Slot::BasicAuthPassword, &p)
 }
 
+/// The documented example htpasswd line: `htpasswd -nbB -C 12 admin secret`.
+const EXAMPLE_HTPASSWD_LINE: &str =
+    "admin:$2y$12$0DlAzt5T2HhGhCfza8hh9uTBlWS.K.Fiorr.aH/bnWF6xDZES4D.K";
+
 fn htpasswd_canonical() -> String {
-    canonical_htpasswd("admin", &SecretValue::new(b"secret".to_vec()), 12)
+    canonical_htpasswd(
+        "admin",
+        &SecretValue::new(b"secret".to_vec()),
+        &SecretValue::new(EXAMPLE_HTPASSWD_LINE.as_bytes().to_vec()),
+        12,
+    )
+}
+
+fn basic_password_default_canonical() -> String {
+    canonical_chars(&Slot::BasicAuthPassword, &chars(32, alnum()))
 }
 
 #[test]
@@ -157,7 +175,12 @@ fn canonical_ssh_variants() {
 fn canonical_htpasswd_format() {
     assert_eq!(
         htpasswd_canonical(),
-        "secretspec-fingerprint-v1\nslot=basic-auth/htpasswd\nusername=61646d696e\npassword-sha256=2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b\ncost=12\n"
+        "secretspec-fingerprint-v1\nslot=basic-auth/htpasswd\nusername=61646d696e\npassword-mac=6364d747107a94c67b469b00f1839829f863bddf086718b2c7f883d8a35d2e2d\ncost=12\n"
+    );
+    // The unsalted SHA-256 of the password must never appear.
+    assert!(
+        !htpasswd_canonical()
+            .contains("2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b")
     );
 }
 
@@ -209,7 +232,12 @@ fn golden_fingerprint_values() {
         (
             "htpasswd",
             htpasswd_canonical(),
-            "8e302bbe8780c93eda8fcd8d173aaf3a71632e5eb26b7a91f134902cab42998e",
+            "184412b8f5585643e0bc203457fadcf8047ef90aaeed8a30ee104fdbe70e9ca8",
+        ),
+        (
+            "basic-auth password defaults",
+            basic_password_default_canonical(),
+            BASIC_PASSWORD_DEFAULT,
         ),
         (
             "bytes base64url prefix suffix",
@@ -434,17 +462,21 @@ fn fingerprint_changes_with_slot_and_with_htpasswd_inputs() {
         fingerprint_of(&canonical_chars(&field("a"), &p)),
         fingerprint_of(&canonical_chars(&field("b"), &p)),
     );
-    let h = |user: &str, pw: &[u8], cost: u32| {
+    let h = |user: &str, pw: &[u8], line: &str, cost: u32| {
         fingerprint_of(&canonical_htpasswd(
             user,
             &SecretValue::new(pw.to_vec()),
+            &SecretValue::new(line.as_bytes().to_vec()),
             cost,
         ))
     };
-    let base = h("admin", b"secret", 12);
-    assert_ne!(base, h("root", b"secret", 12));
-    assert_ne!(base, h("admin", b"other", 12));
-    assert_ne!(base, h("admin", b"secret", 10));
+    let line = EXAMPLE_HTPASSWD_LINE;
+    let base = h("admin", b"secret", line, 12);
+    assert_ne!(base, h("root", b"secret", line, 12));
+    assert_ne!(base, h("admin", b"other", line, 12));
+    assert_ne!(base, h("admin", b"secret", line, 10));
+    // A new bcrypt salt (a new line) changes the fingerprint too.
+    assert_ne!(base, h("admin", b"secret", &line.replace("0Dl", "1Dl"), 12));
 }
 
 const HEX_A: &str = "6819313d1058c21d17f2c11aa042b85e5b39f5b1bb9f505d9eeb90f013bb9266";
@@ -453,9 +485,9 @@ const HEX_B: &str = "fdb7e7a25bf08598dd36a8ab9856b9c28b812ceee2f5153192c5886af53
 #[test]
 fn fingerprint_map_annotation_is_sorted_compact_json() {
     let mut map = FingerprintMap::default();
-    map.0
+    map.slots
         .insert(field("b"), Fingerprint::parse(HEX_B).expect("hex"));
-    map.0
+    map.slots
         .insert(field("a"), Fingerprint::parse(HEX_A).expect("hex"));
     let annotation = map.to_annotation();
     assert_eq!(
@@ -464,7 +496,10 @@ fn fingerprint_map_annotation_is_sorted_compact_json() {
     );
     assert_eq!(
         FingerprintMap::from_annotation(&annotation).expect("round trip"),
-        map
+        ParsedAnnotation {
+            map,
+            problems: Vec::new()
+        }
     );
 }
 
@@ -477,7 +512,8 @@ fn fingerprint_map_annotation_keys_sort_by_string() {
         Slot::BasicAuthHtpasswd,
         field("z"),
     ] {
-        map.0.insert(slot, Fingerprint::parse(HEX_A).expect("hex"));
+        map.slots
+            .insert(slot, Fingerprint::parse(HEX_A).expect("hex"));
     }
     let keys: Vec<String> = map
         .to_annotation()
@@ -499,27 +535,102 @@ fn fingerprint_map_annotation_keys_sort_by_string() {
 }
 
 #[test]
-fn fingerprint_map_annotation_rejects_bad_input() {
-    let bad_annotations = [
-        "not json".to_owned(),
-        "[]".to_owned(),
-        format!(r#"{{"unknown/slot":"{HEX_A}"}}"#),
-        format!(r#"{{"field/":"{HEX_A}"}}"#),
-        format!(r#"{{"field/bad name":"{HEX_A}"}}"#),
-        format!(r#"{{"field/..":"{HEX_A}"}}"#),
-        format!(r#"{{"field/a":"{}"}}"#, HEX_A.to_uppercase()),
-        format!(r#"{{"field/a":"{}"}}"#, &HEX_A[..63]),
-        format!(r#"{{"field/a":"{HEX_A}0"}}"#),
-        r#"{"field/a":"gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"}"#
-            .to_owned(),
-        r#"{"field/a":42}"#.to_owned(),
-    ];
-    for annotation in bad_annotations {
+fn fingerprint_map_annotation_rejects_only_non_object_input() {
+    for annotation in ["not json", "[]", "42", r#""str""#, "null", "", "{"] {
         assert!(
-            FingerprintMap::from_annotation(&annotation).is_err(),
-            "{annotation}"
+            matches!(
+                FingerprintMap::from_annotation(annotation),
+                Err(FingerprintParseError::Json(_))
+            ),
+            "{annotation:?}"
         );
     }
+    let empty = FingerprintMap::from_annotation("{}").expect("empty object");
+    assert_eq!(empty, ParsedAnnotation::default());
+}
+
+#[test]
+fn fingerprint_map_annotation_keeps_unknown_slots() {
+    let annotation = format!(
+        r#"{{"field/a":"{HEX_A}","future/slot":"v2:anything","field/bad name":"x","FIELD/a":"{HEX_B}","field/..":"{HEX_B}"}}"#
+    );
+    let parsed = FingerprintMap::from_annotation(&annotation).expect("object");
+    assert!(parsed.problems.is_empty(), "{:?}", parsed.problems);
+    assert_eq!(
+        parsed.map.slots.keys().cloned().collect::<Vec<_>>(),
+        vec![field("a")]
+    );
+    let unknown: Vec<(&str, &str)> = parsed
+        .map
+        .unknown
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    assert_eq!(
+        unknown,
+        vec![
+            ("FIELD/a", HEX_B),
+            ("field/..", HEX_B),
+            ("field/bad name", "x"),
+            ("future/slot", "v2:anything"),
+        ]
+    );
+    // A writer carries unknown entries through, merged in sorted order.
+    assert_eq!(
+        parsed.map.to_annotation(),
+        format!(
+            r#"{{"FIELD/a":"{HEX_B}","field/..":"{HEX_B}","field/a":"{HEX_A}","field/bad name":"x","future/slot":"v2:anything"}}"#
+        )
+    );
+}
+
+#[test]
+fn fingerprint_map_annotation_invalid_value_invalidates_only_its_slot() {
+    let bad_values = [
+        format!(r#""{}""#, HEX_A.to_uppercase()),
+        format!(r#""{}""#, &HEX_A[..63]),
+        format!(r#""{HEX_A}0""#),
+        r#""gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg""#.to_owned(),
+        r#""""#.to_owned(),
+        "42".to_owned(),
+        "null".to_owned(),
+        format!(r#"["{HEX_A}"]"#),
+    ];
+    for bad in bad_values {
+        let annotation = format!(r#"{{"field/a":{bad},"field/b":"{HEX_B}","ssh/keypair":{bad}}}"#);
+        let parsed = FingerprintMap::from_annotation(&annotation)
+            .unwrap_or_else(|e| panic!("{annotation}: {e}"));
+        assert_eq!(
+            parsed.map.slots.keys().cloned().collect::<Vec<_>>(),
+            vec![field("b")],
+            "{annotation}"
+        );
+        assert_eq!(parsed.map.slots[&field("b")].as_str(), HEX_B);
+        assert!(parsed.map.unknown.is_empty(), "{annotation}");
+        assert_eq!(parsed.problems.len(), 2, "{annotation}");
+        assert!(
+            parsed
+                .problems
+                .iter()
+                .all(|p| matches!(p, FingerprintParseError::InvalidFingerprint(_))),
+            "{:?}",
+            parsed.problems
+        );
+    }
+}
+
+#[test]
+fn fingerprint_map_annotation_drops_non_string_unknown_entries() {
+    let annotation = format!(r#"{{"future/slot":{{"nested":1}},"field/a":"{HEX_A}"}}"#);
+    let parsed = FingerprintMap::from_annotation(&annotation).expect("object");
+    assert_eq!(parsed.map.slots.len(), 1);
+    assert!(parsed.map.unknown.is_empty());
+    assert_eq!(
+        parsed.problems,
+        vec![FingerprintParseError::InvalidUnknownEntry(
+            "future/slot".to_owned()
+        )]
+    );
 }
 
 #[test]

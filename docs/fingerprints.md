@@ -32,8 +32,9 @@ generated value is still valid or must be regenerated.
 | `basic-auth/password` | The `basicAuth` password. |
 | `basic-auth/htpasswd` | The `basicAuth` htpasswd line. |
 
-`basic-auth/htpasswd` is value-dependent (it covers the generated password), so
-it cannot be computed from the spec alone; the other slots can.
+`basic-auth/htpasswd` is value-dependent (it covers the generated password and
+the stored htpasswd line), so it cannot be computed from the spec alone; the
+other slots can.
 
 ## Canonical text
 
@@ -111,13 +112,28 @@ The curve is the API wire string (`P-384`).
 secretspec-fingerprint-v1
 slot=basic-auth/htpasswd
 username=<hex of username bytes>
-password-sha256=<hex of sha256(password bytes)>
+password-mac=<hex of HMAC-SHA256(key = htpasswd line bytes, message = password bytes)>
 cost=<n>
 ```
 
-`cost` is the bcrypt cost (currently `12`). The line is regenerated only when
-the username, the password or the cost changes; bcrypt is salted, so it must
-not be recomputed on every reconcile.
+- The HMAC key is the stored htpasswd line `<username>:<bcrypt hash>` exactly
+  as it is in the Secret data (no trailing newline); the message is the
+  password bytes. HMAC-SHA256 is RFC 2104 with SHA-256; the MAC is written as
+  64 lowercase hex characters.
+- `cost` is the bcrypt cost (currently `12`).
+
+The line is regenerated only when the username, the password or the cost
+changes; bcrypt is salted, so it must not be recomputed on every reconcile.
+Because the key is the line itself, a regenerated line (new salt) also yields
+a new fingerprint.
+
+**Why a MAC and not a hash of the password.** The fingerprints annotation is
+visible to everyone who can read the Secret's metadata, which includes people
+who cannot read its data. A plain `sha256(password)` there would be an
+unsalted password hash that anyone could test guesses against offline. Keyed
+with the salt-bearing htpasswd line, which lives only in the Secret data, the
+value cannot be used to test password guesses without access to the data
+itself.
 
 ## Not fingerprinted
 
@@ -142,9 +158,31 @@ order):
 {"field/a":"<64 hex>","field/b":"<64 hex>"}
 ```
 
-A reader rejects the annotation if it is not a JSON object of strings, if a key
-is not a known slot (see the table above), or if a value is not exactly 64
-lowercase hex characters. An empty map is `{}`.
+An empty map is `{}`.
+
+### Reading the annotation (normative)
+
+A reader MUST be tolerant, so that a rollback or a downgrade, or one damaged
+entry, never makes the operator treat every slot as stale (which would rotate
+every value of the Secret):
+
+1. **Whole-annotation error only for non-objects.** If the text is not JSON,
+   or is JSON but not an object, the reader reports an error for the whole
+   annotation. This is the only case in which no entry is usable.
+2. **Unknown keys are ignored but preserved.** A key that is not a known slot
+   form (see the table above; this includes `field/<name>` where `<name>` is
+   not a valid Secret key name) is not interpreted. If its value is a string,
+   the reader keeps the entry verbatim and a writer MUST re-emit it unchanged,
+   merged with its own slots in the sorted order above. (A known slot wins over
+   a preserved entry with the same key.) An unknown key whose value is not a
+   string cannot be preserved; it is dropped and reported.
+3. **An invalid value invalidates only its own slot.** If a known slot's value
+   is not a string of exactly 64 lowercase hex characters, that slot counts as
+   having no stored fingerprint (so only that value is regenerated) and the
+   problem is reported. All other entries are used normally.
+
+The reference implementation is `FingerprintMap::from_annotation`, which
+returns the usable map plus the list of problems.
 
 ## Stability rule
 
@@ -180,9 +218,30 @@ written out in full.)
 | 6 | `ssh/keypair`, ed25519 | `secretspec-fingerprint-v1\nslot=ssh/keypair\nalgorithm=ed25519\n` | `b62ed2e39a6976cc6626f17f758b49eccf548c2132f73d98ca25c2aa1f89f746` |
 | 7 | `ssh/keypair`, RSA 4096 | `secretspec-fingerprint-v1\nslot=ssh/keypair\nalgorithm=rsa\nbits=4096\n` | `33454c99221f4015946a46dd2760c404084c058d7a4544047aed390bfe099940` |
 | 8 | `ssh/keypair`, ECDSA P-384 | `secretspec-fingerprint-v1\nslot=ssh/keypair\nalgorithm=ecdsa\ncurve=P-384\n` | `4a877ed8174512b3202da9155390324cb7228af6d6bf9158ec3598c50c563eef` |
-| 9 | `basic-auth/htpasswd`, username `admin`, password `secret`, cost 12 | `secretspec-fingerprint-v1\nslot=basic-auth/htpasswd\nusername=61646d696e\npassword-sha256=2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b\ncost=12\n` | `8e302bbe8780c93eda8fcd8d173aaf3a71632e5eb26b7a91f134902cab42998e` |
+| 9 | `basic-auth/htpasswd`, username `admin`, password `secret`, htpasswd line `LINE` (below), cost 12 | `secretspec-fingerprint-v1\nslot=basic-auth/htpasswd\nusername=61646d696e\npassword-mac=6364d747107a94c67b469b00f1839829f863bddf086718b2c7f883d8a35d2e2d\ncost=12\n` | `184412b8f5585643e0bc203457fadcf8047ef90aaeed8a30ee104fdbe70e9ca8` |
+| 10 | `basic-auth/password`, every default (32 alphanumeric, require 0,0,0,0, no prefix/suffix) | `secretspec-fingerprint-v1\nslot=basic-auth/password\nmode=chars\nlength=32\nalphabet=ALNUM\nrequire=0,0,0,0\nprefix=\nsuffix=\n` | `0e8fee5d13ec3fe16a5615c6b3c29a303047c378d6558fc859ef3c7234b7f4c4` |
 
-In vector 9, `2bb80d53…a25b` is `printf %s secret | shasum -a 256`.
+In vector 9, `LINE` is the example htpasswd line produced by
+`htpasswd -nbB -C 12 admin secret` (a real bcrypt hash of `secret`):
+
+```
+admin:$2y$12$0DlAzt5T2HhGhCfza8hh9uTBlWS.K.Fiorr.aH/bnWF6xDZES4D.K
+```
+
+and the `password-mac` value is
+
+```sh
+LINE='admin:$2y$12$0DlAzt5T2HhGhCfza8hh9uTBlWS.K.Fiorr.aH/bnWF6xDZES4D.K'
+printf '%s' secret | openssl dgst -sha256 -mac HMAC -macopt key:"$LINE"
+# SHA2-256(stdin)= 6364d747107a94c67b469b00f1839829f863bddf086718b2c7f883d8a35d2e2d
+python3 -c 'import hmac,hashlib,sys; print(hmac.new(sys.argv[1].encode(), b"secret", hashlib.sha256).hexdigest())' "$LINE"
+# 6364d747107a94c67b469b00f1839829f863bddf086718b2c7f883d8a35d2e2d
+```
+
+Vectors 1, 6, 7 and 10 are also what a minimal manifest resolves to
+(`fields: [{name: password}]`, `sshKeyPair: {}`, `sshKeyPair: {algorithm: rsa}`,
+`basicAuth: {username: admin}`); `crates/secretspec-core/tests/resolve_golden.rs`
+pins that end to end, so a changed default fails as loudly as a changed format.
 
 Reproduce vector 6:
 
@@ -191,5 +250,5 @@ printf 'secretspec-fingerprint-v1\nslot=ssh/keypair\nalgorithm=ed25519\n' | shas
 # b62ed2e39a6976cc6626f17f758b49eccf548c2132f73d98ca25c2aa1f89f746  -
 ```
 
-In vectors 1 and 5 replace `ALNUM` with the full hex string above before
+In vectors 1, 5 and 10 replace `ALNUM` with the full hex string above before
 hashing.
