@@ -1,0 +1,12 @@
+# expect: spec.rotation.interval
+# layer: schema
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i14-rotation-0h
+  namespace: test
+spec:
+  rotation:
+    interval: 0h
+  fields:
+    - name: password

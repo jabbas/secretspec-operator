@@ -6,6 +6,8 @@ use kube::KubeSchema;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::rules;
+
 /// One generated Secret key. Two mutually exclusive modes:
 ///
 /// - **characters** (default): random characters; uses `length`, `charset`,
@@ -15,6 +17,10 @@ use serde::{Deserialize, Serialize};
 /// `prefix` and `suffix` work in both modes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, KubeSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[x_kube(validation = rules::bytes_exclusive())]
+#[x_kube(validation = rules::encoding_with_bytes())]
+#[x_kube(validation = rules::alphabet_with_custom())]
+#[x_kube(validation = rules::require_sum())]
 pub struct FieldSpec {
     /// The Secret key to generate. Letters, digits, `-`, `_` and `.`; unique
     /// within `fields`.

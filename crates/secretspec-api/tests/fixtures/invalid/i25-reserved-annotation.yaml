@@ -1,0 +1,13 @@
+# expect: labels and annotations under secretspec.jabbas.eu/ and app.kubernetes.io/managed-by are reserved
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i25-reserved-annotation
+  namespace: test
+spec:
+  secret:
+    annotations:
+      app.kubernetes.io/managed-by: helm
+  fields:
+    - name: password

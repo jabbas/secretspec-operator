@@ -5,6 +5,7 @@
 mod basic_auth;
 mod bounds;
 mod fields;
+mod rules;
 mod ssh;
 mod status;
 
@@ -70,6 +71,10 @@ pub use status::{SecretKind, SecretSpecStatus};
     )
 )]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[x_kube(validation = rules::exactly_one_kind())]
+#[x_kube(validation = rules::data_collision())]
+#[x_kube(validation = rules::basic_auth_type())]
+#[x_kube(validation = rules::ssh_auth_type())]
 pub struct SecretSpecSpec {
     /// What happens to the generated Secret when this `SecretSpec` is deleted.
     /// `Delete` (default) removes it; `Retain` leaves it in place, detached
@@ -94,6 +99,7 @@ pub struct SecretSpecSpec {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[schemars(transform = bounds::string_map(64, 65536))]
     #[schemars(transform = bounds::no_schema_default)]
+    #[x_kube(validation = rules::data_key_format())]
     pub data: BTreeMap<String, String>,
 
     /// Generated strings and tokens, one Secret key per entry. Mutually
@@ -133,6 +139,7 @@ pub struct RotationSpec {
     /// followed by `m` (minutes), `h` (hours) or `d` (days). Minimum `1h`,
     /// maximum `3650d`. Examples: `90d`, `24h`.
     #[schemars(length(max = 8), regex(pattern = r"^[1-9][0-9]*(m|h|d)$"))]
+    #[x_kube(validation = rules::rotation_range())]
     pub interval: String,
 }
 
@@ -141,25 +148,31 @@ pub struct RotationSpec {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SecretTemplate {
     /// Kubernetes Secret type. Default `Opaque`. Immutable after creation
-    /// because the Secret type is immutable. `kubernetes.io/basic-auth` is
-    /// only valid with `basicAuth`, `kubernetes.io/ssh-auth` only with
-    /// `sshKeyPair`.
+    /// because the Secret type is immutable. `kubernetes.io/basic-auth`
+    /// requires `basicAuth` with the default `username` and `password` keys;
+    /// `kubernetes.io/ssh-auth` requires `sshKeyPair` with the default
+    /// `ssh-privatekey` private key.
     #[serde(rename = "type", default = "default_secret_type")]
     #[schemars(length(max = 253))]
+    #[x_kube(validation = rules::type_immutable())]
     pub type_: String,
 
     /// Extra labels for the Secret. Keys under `secretspec.jabbas.eu/` and
-    /// `app.kubernetes.io/managed-by` are reserved. At most 32 entries.
+    /// `app.kubernetes.io/managed-by` are reserved. Keys are at most 253
+    /// characters. At most 32 entries.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[schemars(transform = bounds::string_map(32, 4096))]
     #[schemars(transform = bounds::no_schema_default)]
+    #[x_kube(validation = rules::reserved_metadata())]
     pub labels: BTreeMap<String, String>,
 
     /// Extra annotations for the Secret. Keys under `secretspec.jabbas.eu/`
-    /// are reserved. At most 32 entries.
+    /// and `app.kubernetes.io/managed-by` are reserved. Keys are at most 253
+    /// characters. At most 32 entries.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[schemars(transform = bounds::string_map(32, 4096))]
     #[schemars(transform = bounds::no_schema_default)]
+    #[x_kube(validation = rules::reserved_metadata())]
     pub annotations: BTreeMap<String, String>,
 }
 

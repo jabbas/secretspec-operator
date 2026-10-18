@@ -1,0 +1,11 @@
+# expect: spec.fields[0].length
+# layer: schema
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i11-length-1025
+  namespace: test
+spec:
+  fields:
+    - name: password
+      length: 1025

@@ -1,0 +1,10 @@
+# expect: spec.basicAuth.username
+# layer: schema
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i23-username-colon
+  namespace: test
+spec:
+  basicAuth:
+    username: "ad:min"

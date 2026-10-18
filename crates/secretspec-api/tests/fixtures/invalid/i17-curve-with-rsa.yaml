@@ -1,0 +1,11 @@
+# expect: ecdsaCurve is only allowed with algorithm ecdsa
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i17-curve-with-rsa
+  namespace: test
+spec:
+  sshKeyPair:
+    algorithm: rsa
+    ecdsaCurve: P-256

@@ -1,0 +1,11 @@
+# expect: encoding is required with bytes and only allowed with bytes
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i04-bytes-without-encoding
+  namespace: test
+spec:
+  fields:
+    - name: token
+      bytes: 32

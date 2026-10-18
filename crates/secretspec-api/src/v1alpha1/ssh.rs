@@ -6,7 +6,7 @@ use std::borrow::Cow;
 
 use kube::KubeSchema;
 
-use super::bounds;
+use super::{bounds, rules};
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 /// rewrites the public-key line.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, KubeSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[x_kube(validation = rules::rsa_bits_only_rsa())]
+#[x_kube(validation = rules::curve_only_ecdsa())]
 pub struct SshKeyPairSpec {
     /// Key algorithm: `ed25519` (default), `rsa` or `ecdsa`.
     #[serde(default)]
@@ -41,8 +43,8 @@ pub struct SshKeyPairSpec {
     #[schemars(length(max = 256), regex(pattern = r"^[ -~]*$"))]
     pub comment: Option<String>,
 
-    /// Names of the Secret keys that hold the key pair. Renaming a key moves
-    /// the existing value; it does not regenerate it.
+    /// Names of the Secret keys that hold the key pair; they must be distinct.
+    /// Renaming a key moves the existing value; it does not regenerate it.
     #[serde(default)]
     pub keys: SshKeys,
 }
@@ -128,6 +130,7 @@ pub enum EcdsaCurve {
 /// Secret key names for the SSH key pair.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, KubeSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[x_kube(validation = rules::ssh_keys_distinct())]
 pub struct SshKeys {
     /// Secret key holding the private key. Default `ssh-privatekey`.
     #[serde(default = "default_private_key")]

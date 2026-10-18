@@ -1,0 +1,11 @@
+# expect: rsaBits is only allowed with algorithm rsa
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i16-rsabits-with-ed25519
+  namespace: test
+spec:
+  sshKeyPair:
+    algorithm: ed25519
+    rsaBits: 4096

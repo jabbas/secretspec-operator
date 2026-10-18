@@ -1,0 +1,12 @@
+# expect: alphabet is required when charset is custom and only allowed then
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i07-alphabet-without-custom
+  namespace: test
+spec:
+  fields:
+    - name: pin
+      charset: hex
+      alphabet: "0123456789"

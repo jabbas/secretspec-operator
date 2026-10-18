@@ -1,0 +1,11 @@
+# expect: spec.fields[0].prefix
+# layer: schema
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i30-prefix-non-ascii
+  namespace: test
+spec:
+  fields:
+    - name: token
+      prefix: "ünï"

@@ -1,0 +1,10 @@
+# expect: spec.sshKeyPair.comment
+# layer: schema
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i32-comment-newline
+  namespace: test
+spec:
+  sshKeyPair:
+    comment: "line one\nline two"

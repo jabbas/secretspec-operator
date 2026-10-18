@@ -1,0 +1,10 @@
+# expect: spec.fields[0].name
+# layer: schema
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i29-field-name-slash
+  namespace: test
+spec:
+  fields:
+    - name: a/b

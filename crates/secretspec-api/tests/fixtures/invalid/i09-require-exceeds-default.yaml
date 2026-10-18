@@ -1,0 +1,15 @@
+# expect: the sum of require counts must not exceed length (default 32)
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i09-require-exceeds-default
+  namespace: test
+spec:
+  fields:
+    - name: password
+      require:
+        lower: 10
+        upper: 10
+        digits: 10
+        symbols: 3

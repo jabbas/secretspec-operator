@@ -5,7 +5,7 @@
 use kube::KubeSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{Charset, RequireSpec};
+use super::{Charset, RequireSpec, rules};
 
 /// Generates a username/password pair plus an htpasswd line
 /// (`<username>:<bcrypt hash>`, bcrypt `$2y$`, cost 12).
@@ -24,7 +24,7 @@ pub struct BasicAuthSpec {
     #[serde(default)]
     pub password: BasicAuthPassword,
 
-    /// Names of the Secret keys that hold the values.
+    /// Names of the Secret keys that hold the values; they must be distinct.
     #[serde(default)]
     pub keys: BasicAuthKeys,
 }
@@ -33,6 +33,8 @@ pub struct BasicAuthSpec {
 /// entry, without `name`, `bytes` and `encoding`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, KubeSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[x_kube(validation = rules::alphabet_with_custom())]
+#[x_kube(validation = rules::require_sum())]
 pub struct BasicAuthPassword {
     /// Number of random characters, 1-1024. When unset the operator uses 32
     /// (not written into the object).
@@ -79,6 +81,7 @@ pub struct BasicAuthPassword {
 /// Secret key names for the basic-auth values.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, KubeSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[x_kube(validation = rules::basic_auth_keys_distinct())]
 pub struct BasicAuthKeys {
     /// Secret key holding the user name. Default `username`.
     #[serde(default = "default_username_key")]

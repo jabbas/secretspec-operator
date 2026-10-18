@@ -35,6 +35,7 @@ fn crd_has_expected_identity() {
     let crd = crd_json();
     let spec = &crd["spec"];
     assert_eq!(spec["group"], "secretspec.jabbas.eu");
+    assert_eq!(spec["group"], secretspec_api::constants::GROUP);
     assert_eq!(spec["scope"], "Namespaced");
     assert_eq!(spec["names"]["kind"], "SecretSpec");
     assert_eq!(spec["names"]["plural"], "secretspecs");
