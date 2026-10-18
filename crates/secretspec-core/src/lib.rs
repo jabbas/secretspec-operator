@@ -3,6 +3,7 @@
 //! Pure, cluster-independent logic for the operator.
 
 pub mod fingerprint;
+pub mod plan;
 pub mod value;
 
 pub use fingerprint::{

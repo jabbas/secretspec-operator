@@ -79,7 +79,7 @@ impl FromStr for Slot {
 ///
 /// Mirrors `secretspec_api::resolve::is_key_name`, which is private to the API
 /// crate; a test in `tests/fingerprint_golden.rs` checks both agree.
-fn is_key_name(s: &str) -> bool {
+pub(crate) fn is_key_name(s: &str) -> bool {
     (1..=MAX_KEY_NAME_LEN).contains(&s.len())
         && s != "."
         && !s.starts_with("..")
