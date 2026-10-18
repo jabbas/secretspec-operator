@@ -36,8 +36,58 @@ pub const DEFAULT_RSA_BITS: u16 = 4096;
 pub const DEFAULT_ECDSA_CURVE: EcdsaCurve = EcdsaCurve::P256;
 /// Frozen: bcrypt cost of the generated htpasswd line.
 pub const BCRYPT_COST: u32 = 12;
+
+// Schema bounds. The `#[schemars(...)]` attributes of the API types use these
+// where the attribute accepts a path, `resolve()` checks the same limits, and
+// the `schema_bounds_match_resolve_constants` test pins every one of them
+// against the generated CRD.
+
+/// Lower bound of `length` and `bytes`.
+pub const MIN_RANDOM_LENGTH: u16 = 1;
 /// Upper bound of `length` and `bytes`.
 pub const MAX_RANDOM_LENGTH: u16 = 1024;
+/// Upper bound of each `require` class count.
+pub const MAX_REQUIRE_COUNT: u16 = 1024;
+/// Minimum number of `fields` entries.
+pub const MIN_FIELDS: usize = 1;
+/// Maximum number of `fields` entries.
+pub const MAX_FIELDS: usize = 32;
+/// Maximum number of `data` entries.
+pub const MAX_DATA_ENTRIES: usize = 64;
+/// Maximum length of a `data` value.
+pub const MAX_DATA_VALUE_LEN: usize = 65_536;
+/// Maximum number of `secret.labels` / `secret.annotations` entries.
+pub const MAX_METADATA_ENTRIES: usize = 32;
+/// Maximum length of a label or annotation value.
+pub const MAX_METADATA_VALUE_LEN: usize = 4_096;
+/// Maximum length of a label or annotation key.
+pub const MAX_METADATA_KEY_LEN: usize = 253;
+/// Maximum length of a Secret key name (`data` keys, `fields[].name`, `keys.*`).
+pub const MAX_KEY_NAME_LEN: usize = 253;
+/// Maximum length of `secret.type`.
+pub const MAX_TYPE_LEN: usize = 253;
+/// Minimum length of `basicAuth.username`.
+pub const MIN_USERNAME_LEN: usize = 1;
+/// Maximum length of `basicAuth.username`.
+pub const MAX_USERNAME_LEN: usize = 253;
+/// Maximum length of `alphabet`.
+pub const MAX_ALPHABET_LEN: usize = 256;
+/// Maximum length of `exclude`.
+pub const MAX_EXCLUDE_LEN: usize = 256;
+/// Maximum length of `prefix` and `suffix`.
+pub const MAX_AFFIX_LEN: usize = 64;
+/// Maximum length of `rotation.interval`.
+pub const MAX_INTERVAL_LEN: usize = 8;
+/// Maximum length of `sshKeyPair.comment`.
+pub const MAX_COMMENT_LEN: usize = 256;
+
+/// Schema pattern (and CEL regex for `data` keys) of a Secret key name.
+///
+/// Kubernetes accepts `[-._a-zA-Z0-9]+` except `.` and anything starting with
+/// `..`. RE2 has no look-ahead, so the rule is phrased positively: an optional
+/// single leading dot, then a character that is not a dot, then anything. The
+/// dot is written as `[.]` so the same text is valid inside a CEL string.
+pub const KEY_NAME_PATTERN: &str = "^[.]?[-_a-zA-Z0-9][-._a-zA-Z0-9]*$";
 
 /// Declares the validation messages once so that the CEL rules (which embed
 /// them in the CRD), `resolve()` (which reports the same rejections) and the
@@ -74,7 +124,7 @@ messages! {
     /// `spec`: literal `data` keys must not shadow generated keys.
     MSG_DATA_COLLISION = "data keys must not collide with generated keys";
     /// `data`: valid Secret key names.
-    MSG_DATA_KEY_FORMAT = "data keys must match [-._a-zA-Z0-9]+ and be at most 253 characters";
+    MSG_DATA_KEY_FORMAT = "data keys must be valid Secret key names: [-._a-zA-Z0-9]+, at most 253 characters, not '.' and not starting with '..'";
     /// `secret.labels` and `secret.annotations`: operator-owned keys.
     MSG_RESERVED_METADATA = "labels and annotations under secretspec.jabbas.eu/ and app.kubernetes.io/managed-by are reserved";
     /// `spec`: the `kubernetes.io/basic-auth` type contract.

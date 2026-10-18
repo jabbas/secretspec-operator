@@ -1,0 +1,9 @@
+# expect: spec.fields
+# layer: schema
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i36-fields-empty
+  namespace: test
+spec:
+  fields: []

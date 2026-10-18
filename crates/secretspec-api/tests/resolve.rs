@@ -630,3 +630,59 @@ fn entropy_for_basic_auth_reports_the_password_key_and_ssh_is_empty() {
     let ssh_bits = resolve_inline("sshKeyPair: {}").entropy_bits();
     assert_eq!(ssh_bits.len(), 0);
 }
+
+#[test]
+fn dot_key_names_are_rejected_everywhere_a_secret_key_is_named() {
+    for bad in [".", "..", "..a", "...", "..-"] {
+        for (yaml, path) in [
+            (
+                format!("data: {{\"{bad}\": x}}\nfields: [{{name: p}}]"),
+                "spec.data",
+            ),
+            (
+                format!("fields: [{{name: \"{bad}\"}}]"),
+                "spec.fields[0].name",
+            ),
+            (
+                format!("sshKeyPair: {{keys: {{privateKey: \"{bad}\"}}}}"),
+                "spec.sshKeyPair.keys.privateKey",
+            ),
+            (
+                format!("sshKeyPair: {{keys: {{publicKey: \"{bad}\"}}}}"),
+                "spec.sshKeyPair.keys.publicKey",
+            ),
+            (
+                format!("basicAuth: {{username: u, keys: {{username: \"{bad}\"}}}}"),
+                "spec.basicAuth.keys.username",
+            ),
+            (
+                format!("basicAuth: {{username: u, keys: {{password: \"{bad}\"}}}}"),
+                "spec.basicAuth.keys.password",
+            ),
+            (
+                format!("basicAuth: {{username: u, keys: {{htpasswd: \"{bad}\"}}}}"),
+                "spec.basicAuth.keys.htpasswd",
+            ),
+        ] {
+            let err = inline_error(&yaml);
+            assert!(err.contains(path), "{bad:?} at {path}: {err}");
+        }
+    }
+    // Keys that merely contain or end with dots are valid Secret keys.
+    resolve_inline(
+        "data: {.a: x, a.: x, a..b: x, .env: x}\nfields: [{name: .hidden}, {name: b.}, {name: c..d}]",
+    );
+}
+
+#[test]
+fn empty_fields_list_is_rejected() {
+    let err = inline_error("fields: []");
+    assert!(
+        err.contains("spec.fields: must contain at least one field"),
+        "{err}"
+    );
+    assert!(
+        err.contains(secretspec_api::resolve::MSG_FIELDS_MIN),
+        "{err}"
+    );
+}

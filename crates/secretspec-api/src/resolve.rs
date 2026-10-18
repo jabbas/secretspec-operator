@@ -26,11 +26,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use crate::constants::{
-    DEFAULT_ECDSA_CURVE, DEFAULT_LENGTH, DEFAULT_RSA_BITS, LABEL_MANAGED_BY, MAX_RANDOM_LENGTH,
-    MSG_ALPHABET_WITH_CUSTOM, MSG_BASIC_AUTH_TYPE, MSG_BYTES_EXCLUSIVE, MSG_CURVE_ONLY_ECDSA,
-    MSG_DATA_COLLISION, MSG_DATA_KEY_FORMAT, MSG_ENCODING_WITH_BYTES, MSG_EXACTLY_ONE_KIND,
-    MSG_KEYS_DISTINCT, MSG_REQUIRE_SUM, MSG_RESERVED_METADATA, MSG_ROTATION_RANGE,
-    MSG_RSA_BITS_ONLY_RSA, MSG_SSH_AUTH_TYPE, RESERVED_PREFIX,
+    DEFAULT_ECDSA_CURVE, DEFAULT_LENGTH, DEFAULT_RSA_BITS, LABEL_MANAGED_BY, MAX_AFFIX_LEN,
+    MAX_ALPHABET_LEN, MAX_COMMENT_LEN, MAX_DATA_ENTRIES, MAX_DATA_VALUE_LEN, MAX_EXCLUDE_LEN,
+    MAX_FIELDS, MAX_INTERVAL_LEN, MAX_KEY_NAME_LEN, MAX_METADATA_ENTRIES, MAX_METADATA_KEY_LEN,
+    MAX_METADATA_VALUE_LEN, MAX_RANDOM_LENGTH, MAX_REQUIRE_COUNT, MAX_TYPE_LEN, MAX_USERNAME_LEN,
+    MIN_FIELDS, MIN_RANDOM_LENGTH, MIN_USERNAME_LEN, MSG_ALPHABET_WITH_CUSTOM, MSG_BASIC_AUTH_TYPE,
+    MSG_BYTES_EXCLUSIVE, MSG_CURVE_ONLY_ECDSA, MSG_DATA_COLLISION, MSG_DATA_KEY_FORMAT,
+    MSG_ENCODING_WITH_BYTES, MSG_EXACTLY_ONE_KIND, MSG_KEYS_DISTINCT, MSG_REQUIRE_SUM,
+    MSG_RESERVED_METADATA, MSG_ROTATION_RANGE, MSG_RSA_BITS_ONLY_RSA, MSG_SSH_AUTH_TYPE,
+    RESERVED_PREFIX,
 };
 use crate::v1alpha1::{
     BasicAuthPassword, BasicAuthSpec, Charset, DeletionPolicy, EcdsaCurve, Encoding, FieldSpec,
@@ -42,10 +46,12 @@ use crate::v1alpha1::{
 
 /// `spec.fields`: at most 32 entries.
 pub const MSG_FIELDS_MAX: &str = "must have at most 32 entries";
+/// `spec.fields`: at least one entry.
+pub const MSG_FIELDS_MIN: &str = "must contain at least one field";
 /// `spec.fields[].name`: unique list-map key.
 pub const MSG_FIELD_NAME_DUPLICATE: &str = "must be unique within fields";
-/// Secret key names (`fields[].name`, `keys.*`): `^[-._a-zA-Z0-9]+$`, at most 253.
-pub const MSG_KEY_NAME_FORMAT: &str = "must match ^[-._a-zA-Z0-9]+$ and be at most 253 characters";
+/// Secret key names (`fields[].name`, `keys.*`): [`crate::constants::KEY_NAME_PATTERN`], at most 253.
+pub const MSG_KEY_NAME_FORMAT: &str = "must be a valid Secret key name: [-._a-zA-Z0-9]+, at most 253 characters, not '.' and not starting with '..'";
 /// `spec.data`: at most 64 entries.
 pub const MSG_DATA_MAX: &str = "must have at most 64 entries";
 /// `spec.data` values: at most 65536 characters.
@@ -85,7 +91,6 @@ pub const MSG_CLASS_EMPTY: &str = "no {class} characters left in the alphabet";
 
 const BASIC_AUTH_TYPE: &str = "kubernetes.io/basic-auth";
 const SSH_AUTH_TYPE: &str = "kubernetes.io/ssh-auth";
-const MAX_KEY_LEN: usize = 253;
 /// `rotation.interval` bounds: 1h ..= 3650d.
 const MIN_ROTATION_SECS: u64 = 3_600;
 const MAX_ROTATION_SECS: u64 = 3_650 * 86_400;
@@ -353,9 +358,12 @@ fn ascii_within(s: &str, lo: u8, hi: u8, min: usize, max: usize) -> bool {
     (min..=max).contains(&s.len()) && s.bytes().all(|b| (lo..=hi).contains(&b))
 }
 
-/// `^[-._a-zA-Z0-9]+$`, at most 253 characters.
+/// [`crate::constants::KEY_NAME_PATTERN`] (`[-._a-zA-Z0-9]+`, but not `.` and not starting with
+/// `..`, as Kubernetes validates Secret keys), at most 253 characters.
 fn is_key_name(s: &str) -> bool {
-    (1..=MAX_KEY_LEN).contains(&s.len())
+    (1..=MAX_KEY_NAME_LEN).contains(&s.len())
+        && s != "."
+        && !s.starts_with("..")
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
@@ -384,7 +392,7 @@ fn resolve_rotation(rotation: &RotationSpec, errs: &mut Errors) -> Option<Durati
 /// Seconds of `^[1-9][0-9]*(m|h|d)$` (at most 8 characters), `None` if the
 /// string does not match.
 fn parse_interval(interval: &str) -> Option<u64> {
-    if interval.len() > 8 {
+    if interval.len() > MAX_INTERVAL_LEN {
         return None;
     }
     let (digits, unit) = interval.split_at_checked(interval.len().checked_sub(1)?)?;
@@ -420,11 +428,11 @@ fn generated_keys(spec: &SecretSpecSpec) -> Vec<&str> {
 }
 
 fn check_data(spec: &SecretSpecSpec, errs: &mut Errors) {
-    if spec.data.len() > 64 {
+    if spec.data.len() > MAX_DATA_ENTRIES {
         errs.add("spec.data", MSG_DATA_MAX);
     }
     for (key, value) in &spec.data {
-        if value.chars().count() > 65_536 {
+        if value.chars().count() > MAX_DATA_VALUE_LEN {
             errs.add(&format!("spec.data[{key}]"), MSG_DATA_VALUE_LENGTH);
         }
     }
@@ -441,7 +449,7 @@ fn check_data(spec: &SecretSpecSpec, errs: &mut Errors) {
 
 fn check_secret_template(spec: &SecretSpecSpec, errs: &mut Errors) {
     let secret = &spec.secret;
-    if secret.type_.chars().count() > MAX_KEY_LEN {
+    if secret.type_.chars().count() > MAX_TYPE_LEN {
         errs.add("spec.secret.type", MSG_TYPE_LENGTH);
     }
     // `secret.type` immutability (a transition rule) needs the old object;
@@ -464,16 +472,16 @@ fn check_secret_template(spec: &SecretSpecSpec, errs: &mut Errors) {
         ("spec.secret.labels", &secret.labels),
         ("spec.secret.annotations", &secret.annotations),
     ] {
-        if map.len() > 32 {
+        if map.len() > MAX_METADATA_ENTRIES {
             errs.add(path, MSG_METADATA_MAX);
         }
         for (key, value) in map {
-            if value.chars().count() > 4_096 {
+            if value.chars().count() > MAX_METADATA_VALUE_LEN {
                 errs.add(&format!("{path}[{key}]"), MSG_METADATA_VALUE_LENGTH);
             }
         }
         let reserved = map.keys().any(|key| {
-            key.chars().count() > MAX_KEY_LEN
+            key.chars().count() > MAX_METADATA_KEY_LEN
                 || key.starts_with(RESERVED_PREFIX)
                 || key == LABEL_MANAGED_BY
         });
@@ -484,8 +492,11 @@ fn check_secret_template(spec: &SecretSpecSpec, errs: &mut Errors) {
 }
 
 fn resolve_fields(fields: &[FieldSpec], errs: &mut Errors) -> Vec<ResolvedField> {
-    if fields.len() > 32 {
+    if fields.len() > MAX_FIELDS {
         errs.add("spec.fields", MSG_FIELDS_MAX);
+    }
+    if fields.len() < MIN_FIELDS {
+        errs.add("spec.fields", MSG_FIELDS_MIN);
     }
     let mut seen = BTreeSet::new();
     let mut resolved = Vec::with_capacity(fields.len());
@@ -507,7 +518,7 @@ fn resolve_fields(fields: &[FieldSpec], errs: &mut Errors) -> Vec<ResolvedField>
             if chars_mode_option {
                 errs.add(&path, MSG_BYTES_EXCLUSIVE);
             }
-            if !(1..=MAX_RANDOM_LENGTH).contains(&count) {
+            if !(MIN_RANDOM_LENGTH..=MAX_RANDOM_LENGTH).contains(&count) {
                 errs.add(&format!("{path}.bytes"), MSG_RANDOM_RANGE);
             }
             Generator::Bytes(BytesParams {
@@ -569,7 +580,7 @@ impl<'a> CharsInput<'a> {
 /// Validates `prefix` / `suffix` and returns the value (`""` when unset).
 fn affix(errs: &mut Errors, path: &str, field: &str, value: Option<&str>) -> String {
     let value = value.unwrap_or_default();
-    if !ascii_within(value, b'!', b'~', 0, 64) {
+    if !ascii_within(value, b'!', b'~', 0, MAX_AFFIX_LEN) {
         errs.add(&format!("{path}.{field}"), MSG_AFFIX_FORMAT);
     }
     value.to_owned()
@@ -577,7 +588,7 @@ fn affix(errs: &mut Errors, path: &str, field: &str, value: Option<&str>) -> Str
 
 fn resolve_chars(errs: &mut Errors, path: &str, input: &CharsInput<'_>) -> CharsParams {
     let length = input.length.unwrap_or(DEFAULT_LENGTH);
-    if !(1..=MAX_RANDOM_LENGTH).contains(&length) {
+    if !(MIN_RANDOM_LENGTH..=MAX_RANDOM_LENGTH).contains(&length) {
         errs.add(&format!("{path}.length"), MSG_RANDOM_RANGE);
     }
 
@@ -588,13 +599,13 @@ fn resolve_chars(errs: &mut Errors, path: &str, input: &CharsInput<'_>) -> Chars
         alphabet_ok = false;
     }
     if let Some(alphabet) = input.alphabet
-        && !ascii_within(alphabet, b'!', b'~', 1, 256)
+        && !ascii_within(alphabet, b'!', b'~', 1, MAX_ALPHABET_LEN)
     {
         errs.add(&format!("{path}.alphabet"), MSG_ALPHABET_FORMAT);
         alphabet_ok = false;
     }
     let exclude = input.exclude.unwrap_or_default();
-    if !ascii_within(exclude, b' ', b'~', 0, 256) {
+    if !ascii_within(exclude, b' ', b'~', 0, MAX_EXCLUDE_LEN) {
         errs.add(&format!("{path}.exclude"), MSG_EXCLUDE_FORMAT);
     }
 
@@ -625,7 +636,7 @@ fn resolve_require(
     };
     let mut count = |class: &str, value: Option<u16>| {
         let value = value.unwrap_or(0);
-        if value > MAX_RANDOM_LENGTH {
+        if value > MAX_REQUIRE_COUNT {
             errs.add(&format!("{path}.require.{class}"), MSG_REQUIRE_RANGE);
         }
         value
@@ -712,7 +723,7 @@ fn resolve_ssh(
     };
     let comment = match &ssh.comment {
         Some(comment) => {
-            if !ascii_within(comment, b' ', b'~', 0, 256) {
+            if !ascii_within(comment, b' ', b'~', 0, MAX_COMMENT_LEN) {
                 errs.add(&format!("{PATH}.comment"), MSG_COMMENT_FORMAT);
             }
             comment.clone()
@@ -735,7 +746,7 @@ fn resolve_ssh(
 
 fn resolve_basic_auth(basic: &BasicAuthSpec, errs: &mut Errors) -> ResolvedBasicAuth {
     const PATH: &str = "spec.basicAuth";
-    let username_ok = (1..=MAX_KEY_LEN).contains(&basic.username.len())
+    let username_ok = (MIN_USERNAME_LEN..=MAX_USERNAME_LEN).contains(&basic.username.len())
         && basic
             .username
             .bytes()

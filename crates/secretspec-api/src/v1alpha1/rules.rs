@@ -16,10 +16,11 @@
 use kube::core::Rule;
 
 use crate::constants::{
-    self, DEFAULT_LENGTH, MSG_ALPHABET_WITH_CUSTOM, MSG_BASIC_AUTH_TYPE, MSG_BYTES_EXCLUSIVE,
-    MSG_CURVE_ONLY_ECDSA, MSG_DATA_COLLISION, MSG_DATA_KEY_FORMAT, MSG_ENCODING_WITH_BYTES,
-    MSG_EXACTLY_ONE_KIND, MSG_KEYS_DISTINCT, MSG_REQUIRE_SUM, MSG_RESERVED_METADATA,
-    MSG_ROTATION_RANGE, MSG_RSA_BITS_ONLY_RSA, MSG_SSH_AUTH_TYPE, MSG_TYPE_IMMUTABLE,
+    self, DEFAULT_LENGTH, KEY_NAME_PATTERN, MAX_KEY_NAME_LEN, MSG_ALPHABET_WITH_CUSTOM,
+    MSG_BASIC_AUTH_TYPE, MSG_BYTES_EXCLUSIVE, MSG_CURVE_ONLY_ECDSA, MSG_DATA_COLLISION,
+    MSG_DATA_KEY_FORMAT, MSG_ENCODING_WITH_BYTES, MSG_EXACTLY_ONE_KIND, MSG_KEYS_DISTINCT,
+    MSG_REQUIRE_SUM, MSG_RESERVED_METADATA, MSG_ROTATION_RANGE, MSG_RSA_BITS_ONLY_RSA,
+    MSG_SSH_AUTH_TYPE, MSG_TYPE_IMMUTABLE,
 };
 
 /// `spec`: exactly one of `fields`, `sshKeyPair`, `basicAuth`.
@@ -118,14 +119,17 @@ pub(crate) fn data_collision() -> Rule {
 /// `data`: every key is a valid Secret key. Map keys cannot be bounded in an
 /// `OpenAPI` schema, so the length bound is part of the rule.
 pub(crate) fn data_key_format() -> Rule {
-    Rule::new("self.all(k, size(k) <= 253 && k.matches('^[-._a-zA-Z0-9]+$'))")
-        .message(MSG_DATA_KEY_FORMAT)
+    Rule::new(format!(
+        "self.all(k, size(k) <= {MAX_KEY_NAME_LEN} && k.matches('{KEY_NAME_PATTERN}'))"
+    ))
+    .message(MSG_DATA_KEY_FORMAT)
 }
 
 /// `secret.labels` and `secret.annotations`: operator-owned keys are reserved.
 pub(crate) fn reserved_metadata() -> Rule {
     Rule::new(format!(
-        "self.all(k, size(k) <= 253 && !k.startsWith('{}') && k != '{}')",
+        "self.all(k, size(k) <= {} && !k.startsWith('{}') && k != '{}')",
+        constants::MAX_METADATA_KEY_LEN,
         constants::RESERVED_PREFIX,
         constants::LABEL_MANAGED_BY,
     ))

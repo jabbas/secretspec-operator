@@ -7,6 +7,7 @@ use std::borrow::Cow;
 use kube::KubeSchema;
 
 use super::{bounds, rules};
+use crate::constants::{KEY_NAME_PATTERN, MAX_COMMENT_LEN, MAX_KEY_NAME_LEN};
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 
@@ -40,10 +41,11 @@ pub struct SshKeyPairSpec {
     /// of the `SecretSpec`; `""` means no comment. Printable ASCII, at most
     /// 256 characters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(length(max = 256), regex(pattern = r"^[ -~]*$"))]
+    #[schemars(length(max = MAX_COMMENT_LEN), regex(pattern = r"^[ -~]*$"))]
     pub comment: Option<String>,
 
-    /// Names of the Secret keys that hold the key pair; they must be distinct.
+    /// Names of the Secret keys that hold the key pair; they must be distinct
+    /// valid Secret key names (not `.`, not starting with `..`).
     /// Renaming a key moves the existing value; it does not regenerate it.
     #[serde(default)]
     pub keys: SshKeys,
@@ -134,12 +136,12 @@ pub enum EcdsaCurve {
 pub struct SshKeys {
     /// Secret key holding the private key. Default `ssh-privatekey`.
     #[serde(default = "default_private_key")]
-    #[schemars(length(max = 253), regex(pattern = r"^[-._a-zA-Z0-9]+$"))]
+    #[schemars(length(max = MAX_KEY_NAME_LEN), regex(pattern = KEY_NAME_PATTERN))]
     pub private_key: String,
 
     /// Secret key holding the public key. Default `ssh-publickey`.
     #[serde(default = "default_public_key")]
-    #[schemars(length(max = 253), regex(pattern = r"^[-._a-zA-Z0-9]+$"))]
+    #[schemars(length(max = MAX_KEY_NAME_LEN), regex(pattern = KEY_NAME_PATTERN))]
     pub public_key: String,
 }
 

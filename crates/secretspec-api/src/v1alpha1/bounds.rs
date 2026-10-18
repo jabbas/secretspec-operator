@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 /// Bounds a `map<string,string>`: `maxProperties` on the map and `maxLength`
 /// on its values. Keys cannot be bounded in an `OpenAPI` schema; that is a CEL
 /// rule.
-pub(crate) fn string_map(max_properties: u64, max_value_length: u64) -> impl Transform {
+pub(crate) fn string_map(max_properties: usize, max_value_length: usize) -> impl Transform {
     move |schema: &mut Schema| {
         schema.insert("maxProperties".to_owned(), json!(max_properties));
         if let Some(Value::Object(values)) = schema.get_mut("additionalProperties") {

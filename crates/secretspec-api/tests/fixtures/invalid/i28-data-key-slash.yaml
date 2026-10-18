@@ -1,4 +1,4 @@
-# expect: data keys must match [-._a-zA-Z0-9]+ and be at most 253 characters
+# expect: data keys must be valid Secret key names: [-._a-zA-Z0-9]+, at most 253 characters, not '.' and not starting with '..'
 # layer: cel
 apiVersion: secretspec.jabbas.eu/v1alpha1
 kind: SecretSpec

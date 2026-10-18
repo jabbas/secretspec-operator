@@ -283,3 +283,44 @@ fn rotation_interval_boundaries() {
         );
     }
 }
+
+/// The CEL rule for `data` keys and the runtime check in `resolve()` must
+/// accept exactly the same key names.
+#[test]
+fn data_key_names_agree_between_cel_and_resolve() {
+    let base = common::load("valid")
+        .into_iter()
+        .find(|f| f.file == "v01-minimal-fields.yaml")
+        .expect("v01 exists");
+    let long_ok = "a".repeat(253);
+    let long_bad = "a".repeat(254);
+    let cases = [
+        ("a", true),
+        (".a", true),
+        ("a.", true),
+        ("a..b", true),
+        ("-", true),
+        ("_", true),
+        (".-", true),
+        (long_ok.as_str(), true),
+        (".", false),
+        ("..", false),
+        ("..a", false),
+        ("...", false),
+        ("", false),
+        ("a/b", false),
+        ("a b", false),
+        ("ü", false),
+        (long_bad.as_str(), false),
+    ];
+    for (key, ok) in cases {
+        let mut value = base.value.clone();
+        value["spec"]["data"] = serde_json::json!({ key: "v" });
+        let obj: SecretSpec = serde_json::from_value(value).expect("deserialises");
+
+        let cel_ok = validate_cel(&obj).is_ok();
+        assert_eq!(cel_ok, ok, "CEL on {key:?}");
+        let resolve_ok = secretspec_api::resolve(&obj.spec, "n", "ns").is_ok();
+        assert_eq!(resolve_ok, ok, "resolve on {key:?}");
+    }
+}

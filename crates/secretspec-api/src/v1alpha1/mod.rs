@@ -19,6 +19,11 @@ use kube::{CustomResource, KubeSchema};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::constants::{
+    MAX_DATA_ENTRIES, MAX_DATA_VALUE_LEN, MAX_FIELDS, MAX_INTERVAL_LEN, MAX_METADATA_ENTRIES,
+    MAX_METADATA_VALUE_LEN, MAX_TYPE_LEN, MIN_FIELDS,
+};
+
 pub use basic_auth::{BasicAuthKeys, BasicAuthPassword, BasicAuthSpec};
 pub use fields::{Charset, Encoding, FieldSpec, RequireSpec};
 pub use ssh::{EcdsaCurve, RsaBits, SshAlgorithm, SshKeyPairSpec, SshKeys};
@@ -93,20 +98,21 @@ pub struct SecretSpecSpec {
     pub secret: SecretTemplate,
 
     /// Literal values copied verbatim into the Secret (for example a fixed
-    /// `username`). Keys must match `^[-._a-zA-Z0-9]+$` (at most 253
-    /// characters) and must not collide with a generated key. At most 64
-    /// entries.
+    /// `username`). Keys are Secret key names: letters, digits, `-`,
+    /// `_` and `.` (at most 253 characters), but not `.` itself and not
+    /// starting with `..`. They must not collide with a generated key. At
+    /// most 64 entries.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    #[schemars(transform = bounds::string_map(64, 65536))]
+    #[schemars(transform = bounds::string_map(MAX_DATA_ENTRIES, MAX_DATA_VALUE_LEN))]
     #[schemars(transform = bounds::no_schema_default)]
     #[x_kube(validation = rules::data_key_format())]
     pub data: BTreeMap<String, String>,
 
     /// Generated strings and tokens, one Secret key per entry. Mutually
-    /// exclusive with `sshKeyPair` and `basicAuth`. At most 32 entries;
+    /// exclusive with `sshKeyPair` and `basicAuth`. 1 to 32 entries;
     /// `name` is the list key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(length(max = 32))]
+    #[schemars(length(min = MIN_FIELDS, max = MAX_FIELDS))]
     #[schemars(extend("x-kubernetes-list-type" = "map", "x-kubernetes-list-map-keys" = ["name"]))]
     pub fields: Option<Vec<FieldSpec>>,
 
@@ -138,7 +144,7 @@ pub struct RotationSpec {
     /// How often to regenerate every generated value: a positive integer
     /// followed by `m` (minutes), `h` (hours) or `d` (days). Minimum `1h`,
     /// maximum `3650d`. Examples: `90d`, `24h`.
-    #[schemars(length(max = 8), regex(pattern = r"^[1-9][0-9]*(m|h|d)$"))]
+    #[schemars(length(max = MAX_INTERVAL_LEN), regex(pattern = r"^[1-9][0-9]*(m|h|d)$"))]
     #[x_kube(validation = rules::rotation_range())]
     pub interval: String,
 }
@@ -153,7 +159,7 @@ pub struct SecretTemplate {
     /// `kubernetes.io/ssh-auth` requires `sshKeyPair` with the default
     /// `ssh-privatekey` private key.
     #[serde(rename = "type", default = "default_secret_type")]
-    #[schemars(length(max = 253))]
+    #[schemars(length(max = MAX_TYPE_LEN))]
     #[x_kube(validation = rules::type_immutable())]
     pub type_: String,
 
@@ -161,7 +167,7 @@ pub struct SecretTemplate {
     /// `app.kubernetes.io/managed-by` are reserved. Keys are at most 253
     /// characters. At most 32 entries.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    #[schemars(transform = bounds::string_map(32, 4096))]
+    #[schemars(transform = bounds::string_map(MAX_METADATA_ENTRIES, MAX_METADATA_VALUE_LEN))]
     #[schemars(transform = bounds::no_schema_default)]
     #[x_kube(validation = rules::reserved_metadata())]
     pub labels: BTreeMap<String, String>,
@@ -170,7 +176,7 @@ pub struct SecretTemplate {
     /// and `app.kubernetes.io/managed-by` are reserved. Keys are at most 253
     /// characters. At most 32 entries.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    #[schemars(transform = bounds::string_map(32, 4096))]
+    #[schemars(transform = bounds::string_map(MAX_METADATA_ENTRIES, MAX_METADATA_VALUE_LEN))]
     #[schemars(transform = bounds::no_schema_default)]
     #[x_kube(validation = rules::reserved_metadata())]
     pub annotations: BTreeMap<String, String>,

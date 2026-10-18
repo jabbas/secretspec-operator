@@ -127,6 +127,7 @@ fn schema_bounds_have_exact_values() {
     let p = |path: &[&str]| at(&spec, path).clone();
 
     assert_eq!(p(&["fields"])["maxItems"], 32);
+    assert_eq!(p(&["fields"])["minItems"], 1);
     assert_eq!(p(&["data"])["maxProperties"], 64);
     assert_eq!(p(&["data"])["additionalProperties"]["maxLength"], 65536);
     for map in ["labels", "annotations"] {
@@ -136,7 +137,8 @@ fn schema_bounds_have_exact_values() {
     }
     assert_eq!(p(&["secret", "type"])["maxLength"], 253);
 
-    let key_re = "^[-._a-zA-Z0-9]+$";
+    // Secret key names: not `.` and not starting with `..` (as Kubernetes).
+    let key_re = "^[.]?[-_a-zA-Z0-9][-._a-zA-Z0-9]*$";
     let name = p(&["fields", "items", "name"]);
     assert_eq!(
         (&name["maxLength"], &name["pattern"]),
@@ -406,4 +408,209 @@ fn wire_format_of_renamed_types() {
     assert_eq!(wire(&EcdsaCurve::P521), json!("P-521"));
     assert!(serde_json::from_value::<RsaBits>(json!(1024)).is_err());
     assert!(serde_json::from_value::<EcdsaCurve>(json!("P-224")).is_err());
+}
+
+/// Every bound `resolve()` enforces must equal the one in the generated CRD.
+/// The constants are the single source: the schema attributes use them, the
+/// CEL rules embed them, and this test fails if the CRD ever differs (for
+/// example because an attribute went back to a literal) or if a message that
+/// quotes a number goes stale.
+// A flat table of bounds; splitting it would only hide the list.
+#[allow(clippy::too_many_lines)]
+#[test]
+fn schema_bounds_match_resolve_constants() {
+    use secretspec_api::constants::*;
+    use secretspec_api::resolve::{
+        MSG_AFFIX_FORMAT, MSG_ALPHABET_FORMAT, MSG_COMMENT_FORMAT, MSG_DATA_MAX,
+        MSG_DATA_VALUE_LENGTH, MSG_EXCLUDE_FORMAT, MSG_FIELDS_MAX, MSG_KEY_NAME_FORMAT,
+        MSG_METADATA_MAX, MSG_METADATA_VALUE_LENGTH, MSG_RANDOM_RANGE, MSG_REQUIRE_RANGE,
+        MSG_ROTATION_FORMAT, MSG_TYPE_LENGTH, MSG_USERNAME_FORMAT,
+    };
+
+    let spec = spec_schema();
+    let node = |path: &[&str]| at(&spec, path).clone();
+    let num = |v: &Value| v.as_f64().unwrap_or_else(|| panic!("not a number: {v}"));
+    let mut checked = 0;
+    // (path, JSON keyword, constant, message that quotes the number, if any)
+    let mut check = |path: &[&str], keyword: &str, expected: f64, message: Option<&str>| {
+        let n = node(path);
+        let actual = if let Some(rest) = keyword.strip_prefix("additionalProperties.") {
+            num(&n["additionalProperties"][rest])
+        } else {
+            num(&n[keyword])
+        };
+        assert!(
+            (actual - expected).abs() < f64::EPSILON,
+            "{path:?}.{keyword}: CRD has {actual}, constant is {expected}"
+        );
+        if let Some(message) = message {
+            assert!(
+                message.contains(&format!("{expected}")),
+                "{message:?} does not mention {expected}"
+            );
+        }
+        checked += 1;
+    };
+    let f = |n: usize| u32::try_from(n).map(f64::from).expect("fits");
+
+    check(&["fields"], "maxItems", f(MAX_FIELDS), Some(MSG_FIELDS_MAX));
+    check(&["fields"], "minItems", f(MIN_FIELDS), None);
+    check(
+        &["data"],
+        "maxProperties",
+        f(MAX_DATA_ENTRIES),
+        Some(MSG_DATA_MAX),
+    );
+    check(
+        &["data"],
+        "additionalProperties.maxLength",
+        f(MAX_DATA_VALUE_LEN),
+        Some(MSG_DATA_VALUE_LENGTH),
+    );
+    for map in ["labels", "annotations"] {
+        check(
+            &["secret", map],
+            "maxProperties",
+            f(MAX_METADATA_ENTRIES),
+            Some(MSG_METADATA_MAX),
+        );
+        check(
+            &["secret", map],
+            "additionalProperties.maxLength",
+            f(MAX_METADATA_VALUE_LEN),
+            Some(MSG_METADATA_VALUE_LENGTH),
+        );
+    }
+    check(
+        &["secret", "type"],
+        "maxLength",
+        f(MAX_TYPE_LEN),
+        Some(MSG_TYPE_LENGTH),
+    );
+
+    for key_path in [
+        vec!["fields", "items", "name"],
+        vec!["sshKeyPair", "keys", "privateKey"],
+        vec!["sshKeyPair", "keys", "publicKey"],
+        vec!["basicAuth", "keys", "username"],
+        vec!["basicAuth", "keys", "password"],
+        vec!["basicAuth", "keys", "htpasswd"],
+    ] {
+        check(
+            &key_path,
+            "maxLength",
+            f(MAX_KEY_NAME_LEN),
+            Some(MSG_KEY_NAME_FORMAT),
+        );
+        assert_eq!(node(&key_path)["pattern"], KEY_NAME_PATTERN, "{key_path:?}");
+    }
+
+    for parent in [vec!["fields", "items"], vec!["basicAuth", "password"]] {
+        let sub = |name: &'static str| -> Vec<&'static str> {
+            parent.iter().copied().chain([name]).collect()
+        };
+        check(
+            &sub("length"),
+            "minimum",
+            f64::from(MIN_RANDOM_LENGTH),
+            Some(MSG_RANDOM_RANGE),
+        );
+        check(
+            &sub("length"),
+            "maximum",
+            f64::from(MAX_RANDOM_LENGTH),
+            Some(MSG_RANDOM_RANGE),
+        );
+        check(
+            &sub("alphabet"),
+            "maxLength",
+            f(MAX_ALPHABET_LEN),
+            Some(MSG_ALPHABET_FORMAT),
+        );
+        check(
+            &sub("exclude"),
+            "maxLength",
+            f(MAX_EXCLUDE_LEN),
+            Some(MSG_EXCLUDE_FORMAT),
+        );
+        check(
+            &sub("prefix"),
+            "maxLength",
+            f(MAX_AFFIX_LEN),
+            Some(MSG_AFFIX_FORMAT),
+        );
+        check(
+            &sub("suffix"),
+            "maxLength",
+            f(MAX_AFFIX_LEN),
+            Some(MSG_AFFIX_FORMAT),
+        );
+        for class in ["lower", "upper", "digits", "symbols"] {
+            let p = [sub("require"), vec![class]].concat();
+            check(&p, "minimum", 0.0, Some(MSG_REQUIRE_RANGE));
+            check(
+                &p,
+                "maximum",
+                f64::from(MAX_REQUIRE_COUNT),
+                Some(MSG_REQUIRE_RANGE),
+            );
+        }
+    }
+    check(
+        &["fields", "items", "bytes"],
+        "minimum",
+        f64::from(MIN_RANDOM_LENGTH),
+        None,
+    );
+    check(
+        &["fields", "items", "bytes"],
+        "maximum",
+        f64::from(MAX_RANDOM_LENGTH),
+        None,
+    );
+
+    check(
+        &["basicAuth", "username"],
+        "minLength",
+        f(MIN_USERNAME_LEN),
+        Some(MSG_USERNAME_FORMAT),
+    );
+    check(
+        &["basicAuth", "username"],
+        "maxLength",
+        f(MAX_USERNAME_LEN),
+        Some(MSG_USERNAME_FORMAT),
+    );
+    check(
+        &["sshKeyPair", "comment"],
+        "maxLength",
+        f(MAX_COMMENT_LEN),
+        Some(MSG_COMMENT_FORMAT),
+    );
+    check(
+        &["rotation", "interval"],
+        "maxLength",
+        f(MAX_INTERVAL_LEN),
+        Some(MSG_ROTATION_FORMAT),
+    );
+    assert_eq!(checked, 49, "number of bounds compared with the CRD");
+
+    // The metadata key limit lives in a CEL rule, not in a schema keyword.
+    let rule = at(&spec, &["secret", "labels"])["x-kubernetes-validations"][0]["rule"]
+        .as_str()
+        .expect("labels rule")
+        .to_owned();
+    assert!(
+        rule.contains(&format!("size(k) <= {MAX_METADATA_KEY_LEN}")),
+        "{rule}"
+    );
+    let rule = at(&spec, &["data"])["x-kubernetes-validations"][0]["rule"]
+        .as_str()
+        .expect("data rule")
+        .to_owned();
+    assert!(
+        rule.contains(&format!("size(k) <= {MAX_KEY_NAME_LEN}")),
+        "{rule}"
+    );
+    assert!(rule.contains(KEY_NAME_PATTERN), "{rule}");
 }
