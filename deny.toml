@@ -15,7 +15,7 @@ allow = [
     "Unicode-3.0",
     "Zlib",
     "CC0-1.0",
-    # Mozilla root-certificate data (webpki-root-certs, via kube-client's rustls verifier).
+    # Root certificates via kube-client rustls (webpki-root-certs: Mozilla root-certificate data).
     "CDLA-Permissive-2.0",
 ]
 
