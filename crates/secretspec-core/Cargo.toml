@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 secretspec-api = { path = "../secretspec-api" }
+bcrypt = "0.19"
 data-encoding.workspace = true
 hex.workspace = true
 hmac.workspace = true
@@ -19,6 +20,8 @@ rand_chacha.workspace = true
 rand_core.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+# Stable 0.6 series (rand_core 0.6); the 0.7 line is release-candidate only.
+ssh-key = { version = "0.6.7", default-features = false, features = ["crypto", "std"] }
 thiserror.workspace = true
 zeroize.workspace = true
 

@@ -5,9 +5,13 @@
 mod support;
 
 use rand_core::RngCore;
-use secretspec_api::resolve::{BytesParams, CharsParams, Require};
-use secretspec_api::v1alpha1::Encoding;
-use secretspec_core::generate::{GenerateError, generate_bytes, generate_chars, os_seeded_rng};
+use secretspec_api::resolve::{BytesParams, CharsParams, Require, SshAlgorithmParams};
+use secretspec_api::v1alpha1::{EcdsaCurve, Encoding};
+use secretspec_core::SecretValue;
+use secretspec_core::generate::{
+    GenerateError, generate_bytes, generate_chars, generate_ssh, htpasswd_line, htpasswd_verifies,
+    os_seeded_rng, private_key_matches, public_key_line,
+};
 use support::seeded_rng;
 
 fn alnum() -> Vec<u8> {
@@ -347,4 +351,178 @@ fn generated_values_redact() {
     assert_eq!(format!("{c:?}"), "<redacted>");
     let b = generate_bytes(&bytes(Encoding::Hex), &mut seeded_rng(1)).unwrap();
     assert_eq!(format!("{b:?}"), "<redacted>");
+}
+
+const ALL_ALGORITHMS: [SshAlgorithmParams; 5] = [
+    SshAlgorithmParams::Ed25519,
+    SshAlgorithmParams::Rsa { bits: 2048 },
+    SshAlgorithmParams::Ecdsa {
+        curve: EcdsaCurve::P256,
+    },
+    SshAlgorithmParams::Ecdsa {
+        curve: EcdsaCurve::P384,
+    },
+    SshAlgorithmParams::Ecdsa {
+        curve: EcdsaCurve::P521,
+    },
+];
+
+#[test]
+fn ssh_ed25519_round_trip() {
+    let pair = generate_ssh(
+        SshAlgorithmParams::Ed25519,
+        "deploy@app",
+        &mut seeded_rng(1),
+    )
+    .unwrap();
+    let private = pair.private_key.expose();
+    assert!(private.starts_with(b"-----BEGIN OPENSSH PRIVATE KEY-----"));
+    assert!(pair.public_key.starts_with("ssh-ed25519 "));
+    assert!(pair.public_key.ends_with(" deploy@app\n"));
+    assert_eq!(
+        public_key_line(private, "deploy@app").unwrap(),
+        pair.public_key
+    );
+    assert!(private_key_matches(private, SshAlgorithmParams::Ed25519));
+    assert!(!private_key_matches(
+        private,
+        SshAlgorithmParams::Rsa { bits: 2048 }
+    ));
+}
+
+#[test]
+fn ssh_empty_comment() {
+    let pair = generate_ssh(SshAlgorithmParams::Ed25519, "", &mut seeded_rng(2)).unwrap();
+    let line = pair.public_key.strip_suffix('\n').unwrap();
+    assert_eq!(line.split(' ').count(), 2);
+    assert!(!pair.public_key.ends_with(" \n"));
+    assert_eq!(
+        public_key_line(pair.private_key.expose(), "").unwrap(),
+        pair.public_key
+    );
+}
+
+#[test]
+fn ssh_rsa_2048_and_ecdsa_curves() {
+    let expected_prefix = [
+        "ssh-ed25519 ",
+        "ssh-rsa ",
+        "ecdsa-sha2-nistp256 ",
+        "ecdsa-sha2-nistp384 ",
+        "ecdsa-sha2-nistp521 ",
+    ];
+    for (i, (alg, prefix)) in ALL_ALGORITHMS.iter().zip(expected_prefix).enumerate() {
+        let pair = generate_ssh(*alg, "c", &mut seeded_rng(10 + i as u64)).unwrap();
+        assert!(pair.public_key.starts_with(prefix), "{alg:?}");
+        let private = pair.private_key.expose();
+        for (j, other) in ALL_ALGORITHMS.iter().enumerate() {
+            assert_eq!(
+                private_key_matches(private, *other),
+                i == j,
+                "{alg:?} vs {other:?}"
+            );
+        }
+    }
+    // Same algorithm, different RSA size.
+    let pair = generate_ssh(
+        SshAlgorithmParams::Rsa { bits: 2048 },
+        "",
+        &mut seeded_rng(3),
+    )
+    .unwrap();
+    assert!(!private_key_matches(
+        pair.private_key.expose(),
+        SshAlgorithmParams::Rsa { bits: 3072 }
+    ));
+}
+
+#[test]
+#[ignore = "slow: RSA 4096"]
+fn ssh_rsa_4096() {
+    let pair = generate_ssh(
+        SshAlgorithmParams::Rsa { bits: 4096 },
+        "big",
+        &mut seeded_rng(4),
+    )
+    .unwrap();
+    assert!(private_key_matches(
+        pair.private_key.expose(),
+        SshAlgorithmParams::Rsa { bits: 4096 }
+    ));
+}
+
+#[test]
+fn ssh_comment_change_keeps_key() {
+    let pair = generate_ssh(SshAlgorithmParams::Ed25519, "old", &mut seeded_rng(5)).unwrap();
+    let renamed = public_key_line(pair.private_key.expose(), "new").unwrap();
+    assert!(renamed.ends_with(" new\n"));
+    let blob = |line: &str| line.split(' ').nth(1).map(str::to_owned);
+    assert_eq!(blob(&renamed), blob(&pair.public_key));
+}
+
+#[test]
+fn public_key_line_rejects_garbage() {
+    assert!(matches!(
+        public_key_line(b"not a key", "c"),
+        Err(GenerateError::Ssh(_))
+    ));
+    assert!(!private_key_matches(
+        b"not a key",
+        SshAlgorithmParams::Ed25519
+    ));
+}
+
+#[test]
+fn ssh_error_and_debug_never_show_key_material() {
+    let pair = generate_ssh(SshAlgorithmParams::Ed25519, "c", &mut seeded_rng(6)).unwrap();
+    assert_eq!(format!("{:?}", pair.private_key), "<redacted>");
+    let err = public_key_line(b"-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n", "c").unwrap_err();
+    assert!(!err.to_string().contains("AAAA"));
+}
+
+fn is_htpasswd_shape(line: &str, user: &str) -> bool {
+    let Some(hash) = line
+        .strip_prefix(user)
+        .and_then(|r| r.strip_prefix(":$2y$12$"))
+    else {
+        return false;
+    };
+    hash.len() == 53
+        && hash
+            .bytes()
+            .all(|b| b == b'.' || b == b'/' || b.is_ascii_alphanumeric())
+}
+
+#[test]
+fn htpasswd_format_and_verify() {
+    let pw = SecretValue::new(b"s3cret-pass".to_vec());
+    let line = htpasswd_line("admin", &pw, &mut seeded_rng(7)).unwrap();
+    let text = std::str::from_utf8(line.expose()).unwrap();
+    assert!(is_htpasswd_shape(text, "admin"), "{text}");
+    assert!(!text.contains('\n'));
+    assert!(htpasswd_verifies(line.expose(), "admin", &pw));
+    assert!(!htpasswd_verifies(
+        line.expose(),
+        "admin",
+        &SecretValue::new(b"other".to_vec())
+    ));
+    assert!(!htpasswd_verifies(line.expose(), "root", &pw));
+    assert!(!htpasswd_verifies(b"admin", "admin", &pw));
+    assert!(!htpasswd_verifies(b"admin:not-a-hash", "admin", &pw));
+
+    let same = htpasswd_line("admin", &pw, &mut seeded_rng(7)).unwrap();
+    assert_eq!(same.expose(), line.expose());
+    let other = htpasswd_line("admin", &pw, &mut seeded_rng(8)).unwrap();
+    assert_ne!(other.expose(), line.expose());
+}
+
+#[test]
+fn htpasswd_verifies_line_from_htpasswd_tool() {
+    // Produced by `htpasswd -nbB -C 12 admin secret` (docs/fingerprints.md, vector 9).
+    let line = b"admin:$2y$12$0DlAzt5T2HhGhCfza8hh9uTBlWS.K.Fiorr.aH/bnWF6xDZES4D.K";
+    assert!(htpasswd_verifies(
+        line,
+        "admin",
+        &SecretValue::new(b"secret".to_vec())
+    ));
 }

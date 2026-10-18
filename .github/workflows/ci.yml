@@ -33,6 +33,15 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - run: cargo test --workspace
 
+  # RSA 4096 key generation is too slow for debug builds; run the one test
+  # that covers it in release mode.
+  test-slow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+      - run: cargo test -p secretspec-core --release --test generators -- --ignored ssh_rsa_4096
+
   crdgen:
     runs-on: ubuntu-latest
     steps:

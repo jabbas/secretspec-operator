@@ -10,9 +10,13 @@
 
 mod bytes;
 mod chars;
+mod htpasswd;
+mod ssh;
 
 pub use bytes::generate_bytes;
 pub use chars::generate_chars;
+pub use htpasswd::{htpasswd_line, htpasswd_verifies};
+pub use ssh::{SshKeyPair, generate_ssh, private_key_matches, public_key_line};
 
 use rand_chacha::ChaCha20Rng;
 use rand_core::{OsRng, RngCore, SeedableRng};
