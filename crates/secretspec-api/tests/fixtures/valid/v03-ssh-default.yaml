@@ -1,0 +1,7 @@
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: v03-ssh-default
+  namespace: test
+spec:
+  sshKeyPair: {}

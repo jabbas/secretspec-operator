@@ -1,0 +1,9 @@
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: v08-ssh-auth-type
+  namespace: test
+spec:
+  secret:
+    type: kubernetes.io/ssh-auth
+  sshKeyPair: {}

@@ -1,0 +1,13 @@
+# expect: type kubernetes.io/ssh-auth requires sshKeyPair with keys.privateKey "ssh-privatekey"
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i27-ssh-auth-type-wrong-key
+  namespace: test
+spec:
+  secret:
+    type: kubernetes.io/ssh-auth
+  sshKeyPair:
+    keys:
+      privateKey: id_ed25519

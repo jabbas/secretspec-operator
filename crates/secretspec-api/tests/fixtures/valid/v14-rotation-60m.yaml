@@ -1,0 +1,10 @@
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: v14-rotation-60m
+  namespace: test
+spec:
+  rotation:
+    interval: 60m
+  fields:
+    - name: token

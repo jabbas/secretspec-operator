@@ -1,0 +1,12 @@
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: v06-basic-auth-traefik
+  namespace: test
+spec:
+  basicAuth:
+    username: admin
+    password:
+      length: 32
+    keys:
+      htpasswd: users

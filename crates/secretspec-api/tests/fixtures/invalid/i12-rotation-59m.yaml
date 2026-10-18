@@ -1,0 +1,12 @@
+# expect: rotation.interval must be between 1h and 3650d
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i12-rotation-59m
+  namespace: test
+spec:
+  rotation:
+    interval: 59m
+  fields:
+    - name: password

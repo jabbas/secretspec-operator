@@ -1,0 +1,11 @@
+# expect: data keys must not collide with generated keys
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i39-data-collides-ssh-publickey
+  namespace: test
+spec:
+  data:
+    ssh-publickey: fixed
+  sshKeyPair: {}

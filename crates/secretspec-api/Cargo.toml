@@ -1,0 +1,26 @@
+[package]
+name = "secretspec-api"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+kube.workspace = true
+k8s-openapi.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# `cel` enables client-side CEL evaluation (`validate_cel`) for the rule tests.
+# `client` + `runtime` (+ TLS) drive the `#[ignore]`d server-validation suite.
+kube = { workspace = true, features = ["cel", "client", "runtime", "rustls-tls", "ring"] }
+serde_norway.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

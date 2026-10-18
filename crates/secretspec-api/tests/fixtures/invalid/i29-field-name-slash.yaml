@@ -1,0 +1,11 @@
+# expect: spec.fields[0].name
+# layer: schema
+# server-expect: should match '^[.]?[-_a-zA-Z0-9][-._a-zA-Z0-9]*$'
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i29-field-name-slash
+  namespace: test
+spec:
+  fields:
+    - name: a/b

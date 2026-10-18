@@ -1,0 +1,10 @@
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: v09-bytes-hex
+  namespace: test
+spec:
+  fields:
+    - name: rpc-secret
+      bytes: 32
+      encoding: hex

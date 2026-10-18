@@ -1,0 +1,9 @@
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: v04-ssh-rsa-3072
+  namespace: test
+spec:
+  sshKeyPair:
+    algorithm: rsa
+    rsaBits: 3072

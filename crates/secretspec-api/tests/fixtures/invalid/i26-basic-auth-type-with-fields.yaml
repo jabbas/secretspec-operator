@@ -1,0 +1,12 @@
+# expect: type kubernetes.io/basic-auth requires basicAuth with keys.username "username" and keys.password "password"
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i26-basic-auth-type-with-fields
+  namespace: test
+spec:
+  secret:
+    type: kubernetes.io/basic-auth
+  fields:
+    - name: password

@@ -1,0 +1,13 @@
+# expect: Duplicate value
+# layer: schema
+# server-expect: spec.fields[1]: Duplicate value
+# resolve-expect: spec.fields[1].name
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i31-duplicate-field-names
+  namespace: test
+spec:
+  fields:
+    - name: password
+    - name: password

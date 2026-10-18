@@ -1,0 +1,11 @@
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: v13-custom-alphabet
+  namespace: test
+spec:
+  fields:
+    - name: pin
+      length: 8
+      charset: custom
+      alphabet: "0123456789"

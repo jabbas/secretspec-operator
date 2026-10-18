@@ -1,0 +1,12 @@
+# expect: secret.type must be Opaque, kubernetes.io/basic-auth, kubernetes.io/ssh-auth or a custom type outside kubernetes.io/ (bootstrap tokens are not allowed)
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i47-type-bootstrap-token
+  namespace: test
+spec:
+  secret:
+    type: bootstrap.kubernetes.io/token
+  fields:
+    - name: token-secret

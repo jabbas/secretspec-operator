@@ -1,0 +1,10 @@
+# expect: spec.fields
+# layer: schema
+# server-expect: should have at least 1 items
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i36-fields-empty
+  namespace: test
+spec:
+  fields: []

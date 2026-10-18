@@ -1,0 +1,12 @@
+# expect: data keys must be valid Secret key names: [-._a-zA-Z0-9]+, at most 253 characters, not '.' and not starting with '..'
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i28-data-key-slash
+  namespace: test
+spec:
+  data:
+    a/b: value
+  fields:
+    - name: password

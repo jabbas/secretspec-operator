@@ -1,0 +1,10 @@
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: v10-bytes-base64url
+  namespace: test
+spec:
+  fields:
+    - name: fernet-key
+      bytes: 32
+      encoding: base64url

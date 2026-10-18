@@ -1,0 +1,11 @@
+# expect: exactly one of fields, sshKeyPair or basicAuth must be set
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i02-two-kinds
+  namespace: test
+spec:
+  fields:
+    - name: password
+  sshKeyPair: {}

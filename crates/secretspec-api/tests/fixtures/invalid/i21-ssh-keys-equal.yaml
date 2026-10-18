@@ -1,0 +1,12 @@
+# expect: secret key names in keys must be distinct
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i21-ssh-keys-equal
+  namespace: test
+spec:
+  sshKeyPair:
+    keys:
+      privateKey: key
+      publicKey: key

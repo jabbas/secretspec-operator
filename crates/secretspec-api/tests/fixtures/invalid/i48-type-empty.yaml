@@ -1,0 +1,13 @@
+# expect: spec.secret.type
+# layer: schema
+# server-expect: should be at least 1 chars long
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i48-type-empty
+  namespace: test
+spec:
+  secret:
+    type: ""
+  fields:
+    - name: password

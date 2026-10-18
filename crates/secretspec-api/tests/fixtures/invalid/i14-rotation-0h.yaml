@@ -1,0 +1,13 @@
+# expect: spec.rotation.interval
+# layer: schema
+# server-expect: should match '^[1-9][0-9]*(m|h|d)$'
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i14-rotation-0h
+  namespace: test
+spec:
+  rotation:
+    interval: 0h
+  fields:
+    - name: password

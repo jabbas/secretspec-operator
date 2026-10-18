@@ -1,0 +1,13 @@
+# expect: label and annotation keys must be at most 253 characters; keys under secretspec.jabbas.eu/ and app.kubernetes.io/managed-by are reserved
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i24-reserved-label
+  namespace: test
+spec:
+  secret:
+    labels:
+      secretspec.jabbas.eu/owner: me
+  fields:
+    - name: password

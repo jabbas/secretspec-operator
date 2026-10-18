@@ -1,0 +1,10 @@
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: u01-type-immutable
+  namespace: test
+spec:
+  secret:
+    type: Opaque
+  basicAuth:
+    username: admin

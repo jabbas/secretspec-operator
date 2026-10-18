@@ -1,0 +1,12 @@
+# expect: data keys must not collide with generated keys
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i18-data-collides-field
+  namespace: test
+spec:
+  data:
+    password: fixed
+  fields:
+    - name: password
