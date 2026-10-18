@@ -1,0 +1,12 @@
+# expect: alphabet is required when charset is custom and only allowed then
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i37-basic-auth-custom-without-alphabet
+  namespace: test
+spec:
+  basicAuth:
+    username: admin
+    password:
+      charset: custom

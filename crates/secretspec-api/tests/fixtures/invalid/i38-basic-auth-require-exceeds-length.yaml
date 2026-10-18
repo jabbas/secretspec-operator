@@ -1,0 +1,15 @@
+# expect: the sum of require counts must not exceed length (default 32)
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i38-basic-auth-require-exceeds-length
+  namespace: test
+spec:
+  basicAuth:
+    username: admin
+    password:
+      length: 4
+      require:
+        lower: 3
+        digits: 2

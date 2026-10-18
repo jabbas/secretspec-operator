@@ -1,0 +1,12 @@
+# expect: data keys must not collide with generated keys
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i40-data-collides-basic-auth-username
+  namespace: test
+spec:
+  data:
+    username: fixed
+  basicAuth:
+    username: admin
