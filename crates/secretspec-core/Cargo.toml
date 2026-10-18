@@ -12,7 +12,10 @@ workspace = true
 
 [dependencies]
 secretspec-api = { path = "../secretspec-api" }
+data-encoding.workspace = true
+getrandom.workspace = true
 hex.workspace = true
+rand_core.workspace = true
 hmac.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -20,4 +23,5 @@ thiserror.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+rand_chacha.workspace = true
 serde_norway.workspace = true

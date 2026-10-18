@@ -23,6 +23,12 @@ hex = "0.4"
 thiserror = "2"
 zeroize = "1"
 tokio = "1"
+data-encoding = "2"
+# rand_core 0.10 is the version `ssh-key` 0.7 uses; generators take its
+# `CryptoRng`. `getrandom::SysRng` is the production OS RNG.
+rand_core = "0.10"
+getrandom = { version = "0.4", features = ["sys_rng"] }
+rand_chacha = "0.10"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
