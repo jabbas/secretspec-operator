@@ -28,13 +28,14 @@ pub struct SshKeyPairSpec {
     /// `algorithm: rsa`. When unset the operator uses 4096 (not written into
     /// the object).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(transform = bounds::strip_null_enum)]
+    #[schemars(transform = bounds::plain_enum)]
     pub rsa_bits: Option<RsaBits>,
 
     /// ECDSA curve (`P-256`, `P-384` or `P-521`); only valid with
     /// `algorithm: ecdsa`. When unset the operator uses `P-256` (not written
     /// into the object).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(transform = bounds::plain_enum)]
     pub ecdsa_curve: Option<EcdsaCurve>,
 
     /// Comment in the public key line. When unset it is `<name>@<namespace>`

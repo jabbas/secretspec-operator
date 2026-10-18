@@ -44,6 +44,7 @@ pub struct FieldSpec {
     /// uses `alphabet`. When unset the operator uses `alphanumeric` (not
     /// written into the object).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(transform = super::bounds::plain_enum)]
     pub charset: Option<Charset>,
 
     /// Characters mode: custom alphabet, required if and only if
@@ -75,6 +76,7 @@ pub struct FieldSpec {
     /// `base64url` or `base32`. Required with `bytes`. Standard alphabets,
     /// padded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(transform = super::bounds::plain_enum)]
     pub encoding: Option<Encoding>,
 
     /// Text prepended verbatim to the value. Printable ASCII without spaces,

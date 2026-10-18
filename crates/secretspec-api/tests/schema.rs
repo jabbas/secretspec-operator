@@ -331,6 +331,30 @@ fn enums_and_required_are_exact() {
     );
     assert_eq!(at(&spec, &["sshKeyPair", "rsaBits"])["type"], "integer");
 
+    // The API server rejects an explicit `null` on an `enum` property even when
+    // it is `nullable` (verified against kind). Enum properties are therefore
+    // non-nullable, so the server prunes `null` like an omitted property.
+    for path in [
+        vec!["fields", "items", "charset"],
+        vec!["fields", "items", "encoding"],
+        vec!["basicAuth", "password", "charset"],
+        vec!["sshKeyPair", "rsaBits"],
+        vec!["sshKeyPair", "ecdsaCurve"],
+    ] {
+        let prop = at(&spec, &path);
+        assert!(
+            prop.get("nullable").is_none(),
+            "{path:?} must not be nullable"
+        );
+        assert!(
+            !prop["enum"]
+                .as_array()
+                .expect("enum")
+                .contains(&Value::Null),
+            "{path:?}: enum must not list null"
+        );
+    }
+
     let status = &root_schema()["properties"]["status"]["properties"];
     assert_eq!(
         status["kind"]["enum"],

@@ -51,6 +51,7 @@ pub struct BasicAuthPassword {
     /// (adds punctuation), `hex` (0-9a-f) or `custom` (uses `alphabet`). When
     /// unset the operator uses `alphanumeric` (not written into the object).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(transform = super::bounds::plain_enum)]
     pub charset: Option<Charset>,
 
     /// Custom alphabet, required if and only if `charset: custom`. Printable
