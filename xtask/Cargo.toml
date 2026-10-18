@@ -9,3 +9,9 @@ publish = false
 
 [lints]
 workspace = true
+
+[dependencies]
+secretspec-api = { path = "../crates/secretspec-api" }
+kube.workspace = true
+k8s-openapi.workspace = true
+serde_norway.workspace = true
