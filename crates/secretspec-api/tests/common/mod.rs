@@ -8,6 +8,7 @@
 //! ```yaml
 //! # expect: <text the rejection message must contain>
 //! # layer: cel|schema   (default: cel)
+//! # resolve-expect: <text resolve()'s error must contain; schema layer only>
 //! ```
 #![allow(dead_code, clippy::expect_used, clippy::unwrap_used)] // each test binary uses a different subset
 
@@ -26,6 +27,9 @@ pub struct Fixture {
     pub file: String,
     /// Text the rejection message must contain (`# expect:` header).
     pub expect: Option<String>,
+    /// Text `resolve()`'s error must contain (`# resolve-expect:` header). Only
+    /// needed for schema-layer fixtures whose `# expect:` is not a JSON path.
+    pub resolve_expect: Option<String>,
     /// Layer expected to reject the fixture (`# layer:` header).
     pub layer: Layer,
     /// The parsed manifest.
@@ -71,6 +75,7 @@ pub fn load(dir: &str) -> Vec<Fixture> {
                     .to_string_lossy()
                     .into_owned(),
                 expect: header("expect"),
+                resolve_expect: header("resolve-expect"),
                 layer,
                 value,
             }

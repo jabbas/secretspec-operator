@@ -8,4 +8,7 @@
 //! `///` doc comment here is user-facing documentation (`kubectl explain`).
 
 pub mod constants;
+pub mod resolve;
 pub mod v1alpha1;
+
+pub use resolve::{InvalidSpec, ResolvedSpec, resolve};
