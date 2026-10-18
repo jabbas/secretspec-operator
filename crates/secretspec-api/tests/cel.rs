@@ -168,9 +168,20 @@ fn crd_rules() -> Vec<CrdRule> {
         }
     }
     let crd = serde_json::to_value(SecretSpec::crd()).expect("crd serialises");
-    let spec = &crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]["spec"];
+    let root = &crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"];
     let mut out = Vec::new();
-    walk("spec", spec, &mut out);
+    // Rules on the root node itself (they may read `metadata.name`); its
+    // `status` subtree has no rules.
+    let mut root_only = root.clone();
+    root_only
+        .as_object_mut()
+        .expect("root schema")
+        .remove("properties");
+    walk("<root>", &root_only, &mut out);
+    for rule in &mut out {
+        rule.node = root.clone();
+    }
+    walk("spec", &root["properties"]["spec"], &mut out);
     out
 }
 
@@ -212,6 +223,7 @@ fn rules_sit_on_the_narrowest_schema_node() {
         .collect();
     got.sort();
     let mut want: Vec<(&str, &str)> = vec![
+        ("<root>", MSG_NAME_LENGTH),
         ("spec", MSG_EXACTLY_ONE_KIND),
         ("spec", MSG_DATA_COLLISION),
         ("spec", MSG_BASIC_AUTH_TYPE),
@@ -219,6 +231,7 @@ fn rules_sit_on_the_narrowest_schema_node() {
         ("spec.data", MSG_DATA_KEY_FORMAT),
         ("spec.rotation.interval", MSG_ROTATION_RANGE),
         ("spec.secret.type", MSG_TYPE_IMMUTABLE),
+        ("spec.secret.type", MSG_SECRET_TYPE_ALLOWED),
         ("spec.secret.labels", MSG_RESERVED_METADATA),
         ("spec.secret.annotations", MSG_RESERVED_METADATA),
         ("spec.sshKeyPair", MSG_RSA_BITS_ONLY_RSA),
@@ -322,5 +335,69 @@ fn data_key_names_agree_between_cel_and_resolve() {
         assert_eq!(cel_ok, ok, "CEL on {key:?}");
         let resolve_ok = secretspec_api::resolve(&obj.spec, "n", "ns").is_ok();
         assert_eq!(resolve_ok, ok, "resolve on {key:?}");
+    }
+}
+
+fn v01_with(edit: impl FnOnce(&mut Value)) -> SecretSpec {
+    let mut value = common::load("valid")
+        .into_iter()
+        .find(|f| f.file == "v01-minimal-fields.yaml")
+        .expect("v01 exists")
+        .value;
+    edit(&mut value);
+    serde_json::from_value(value).expect("deserialises")
+}
+
+/// The `secret.type` allow-list: CEL and `resolve()` agree on every case.
+/// (`""` is rejected by the schema's `minLength`, which CEL does not see.)
+#[test]
+fn secret_type_allow_list_agrees_between_cel_and_resolve() {
+    let cases = [
+        ("Opaque", true),
+        ("kubernetes.io/basic-auth", true),
+        ("kubernetes.io/ssh-auth", true),
+        ("example.com/thing", true),
+        ("opaque", true),
+        ("bootstrap.kubernetes.io/other", true),
+        ("kubernetes.io/service-account-token", false),
+        ("kubernetes.io/tls", false),
+        ("kubernetes.io/dockerconfigjson", false),
+        ("kubernetes.io/", false),
+        ("bootstrap.kubernetes.io/token", false),
+    ];
+    for (secret_type, ok) in cases {
+        let obj = v01_with(|v| v["spec"]["secret"] = serde_json::json!({ "type": secret_type }));
+        // Only the allow-list rule matters here: the basic-auth / ssh-auth
+        // type contracts reject v01's `fields` on their own.
+        let msg = constants::MSG_SECRET_TYPE_ALLOWED;
+        let cel_rejects = validate_cel(&obj)
+            .err()
+            .is_some_and(|errors| errors.iter().any(|e| e.message == msg));
+        assert_eq!(!cel_rejects, ok, "CEL on {secret_type:?}");
+        let resolve_rejects = secretspec_api::resolve(&obj.spec, "n", "ns")
+            .err()
+            .is_some_and(|e| e.to_string().contains(msg));
+        assert_eq!(!resolve_rejects, ok, "resolve on {secret_type:?}");
+    }
+}
+
+/// `metadata.name` length: the root rule sees `metadata.name`, and `resolve()`
+/// applies the same limit to its `name` argument.
+#[test]
+fn name_length_agrees_between_cel_and_resolve() {
+    for (len, ok) in [(1, true), (63, true), (64, false), (253, false)] {
+        let name = "n".repeat(len);
+        let obj = v01_with(|v| v["metadata"]["name"] = Value::String(name.clone()));
+        let cel = validate_cel(&obj);
+        assert_eq!(cel.is_ok(), ok, "CEL on {len} characters: {cel:?}");
+        let resolved = secretspec_api::resolve(&obj.spec, &name, "ns");
+        assert_eq!(resolved.is_ok(), ok, "resolve on {len} characters");
+        if let Err(e) = resolved {
+            assert!(
+                e.to_string()
+                    .contains(&format!("metadata.name: {}", constants::MSG_NAME_LENGTH)),
+                "{e}"
+            );
+        }
     }
 }

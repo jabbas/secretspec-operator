@@ -136,6 +136,7 @@ fn schema_bounds_have_exact_values() {
         assert_eq!(m["additionalProperties"]["maxLength"], 4096, "{map}");
     }
     assert_eq!(p(&["secret", "type"])["maxLength"], 253);
+    assert_eq!(p(&["secret", "type"])["minLength"], 1);
 
     // Secret key names: not `.` and not starting with `..` (as Kubernetes).
     let key_re = "^[.]?[-_a-zA-Z0-9][-._a-zA-Z0-9]*$";
@@ -408,15 +409,60 @@ fn every_valid_fixture_deserializes() {
     }
 }
 
+/// Production types tolerate fields they do not know (a newer CRD during an
+/// upgrade or rollback must not break every watch event); the strict check
+/// lives in the fixture loader instead.
 #[test]
-fn unknown_spec_key_is_rejected() {
+fn unknown_keys_are_ignored_but_caught_in_fixtures() {
     let manifest = json!({
         "apiVersion": "secretspec.jabbas.eu/v1alpha1",
         "kind": "SecretSpec",
         "metadata": {"name": "x", "namespace": "test"},
-        "spec": {"fields": [{"name": "p"}], "bogus": true}
+        "spec": {
+            "fields": [{"name": "p", "lenght": 8}],
+            "secret": {"type": "Opaque", "labelz": {}},
+            "data": {"any-key": "v"},
+            "bogus": true
+        },
+        "extra": 1
     });
-    assert!(serde_json::from_value::<SecretSpec>(manifest).is_err());
+    let parsed: SecretSpec =
+        serde_json::from_value(manifest.clone()).expect("unknown fields are ignored");
+    assert_eq!(parsed.spec.fields.expect("fields")[0].length, None);
+    assert_eq!(
+        common::unknown_keys(&manifest),
+        vec![
+            "extra".to_owned(),
+            "spec.bogus".to_owned(),
+            "spec.fields[0].lenght".to_owned(),
+            "spec.secret.labelz".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn root_has_a_description_and_the_name_rule() {
+    let root = root_schema();
+    let description = root["description"].as_str().expect("root description");
+    for needle in [
+        "same name",
+        "exactly one",
+        "spec.fields",
+        "spec.sshKeyPair",
+        "spec.basicAuth",
+    ] {
+        assert!(
+            description.contains(needle),
+            "{needle:?} in {description:?}"
+        );
+    }
+    assert_eq!(
+        root["x-kubernetes-validations"],
+        json!([{
+            "rule": format!("size(self.metadata.name) <= {}", secretspec_api::constants::MAX_NAME_LEN),
+            "message": secretspec_api::constants::MSG_NAME_LENGTH,
+        }])
+    );
 }
 
 #[test]
@@ -509,6 +555,12 @@ fn schema_bounds_match_resolve_constants() {
         &["secret", "type"],
         "maxLength",
         f(MAX_TYPE_LEN),
+        Some(MSG_TYPE_LENGTH),
+    );
+    check(
+        &["secret", "type"],
+        "minLength",
+        f(MIN_TYPE_LEN),
         Some(MSG_TYPE_LENGTH),
     );
 
@@ -617,7 +669,7 @@ fn schema_bounds_match_resolve_constants() {
         f(MAX_INTERVAL_LEN),
         Some(MSG_ROTATION_FORMAT),
     );
-    assert_eq!(checked, 49, "number of bounds compared with the CRD");
+    assert_eq!(checked, 50, "number of bounds compared with the CRD");
 
     // The metadata key limit lives in a CEL rule, not in a schema keyword.
     let rule = at(&spec, &["secret", "labels"])["x-kubernetes-validations"][0]["rule"]
@@ -627,6 +679,14 @@ fn schema_bounds_match_resolve_constants() {
     assert!(
         rule.contains(&format!("size(k) <= {MAX_METADATA_KEY_LEN}")),
         "{rule}"
+    );
+    assert!(
+        MSG_RESERVED_METADATA.contains(&format!("at most {MAX_METADATA_KEY_LEN} characters")),
+        "{MSG_RESERVED_METADATA}"
+    );
+    assert!(
+        MSG_NAME_LENGTH.contains(&format!("at most {MAX_NAME_LEN} characters")),
+        "{MSG_NAME_LENGTH}"
     );
     let rule = at(&spec, &["data"])["x-kubernetes-validations"][0]["rule"]
         .as_str()

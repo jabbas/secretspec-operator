@@ -64,8 +64,25 @@ pub const MAX_METADATA_VALUE_LEN: usize = 4_096;
 pub const MAX_METADATA_KEY_LEN: usize = 253;
 /// Maximum length of a Secret key name (`data` keys, `fields[].name`, `keys.*`).
 pub const MAX_KEY_NAME_LEN: usize = 253;
+/// Minimum length of `secret.type`.
+pub const MIN_TYPE_LEN: usize = 1;
 /// Maximum length of `secret.type`.
 pub const MAX_TYPE_LEN: usize = 253;
+/// Maximum length of the `SecretSpec` name: it is the value of the
+/// [`LABEL_SPEC_NAME`] label, and label values are at most 63 characters.
+pub const MAX_NAME_LEN: usize = 63;
+/// Secret types the operator may create besides custom types (see
+/// [`MSG_SECRET_TYPE_ALLOWED`]).
+pub const ALLOWED_BUILTIN_SECRET_TYPES: [&str; 3] = [
+    "Opaque",
+    "kubernetes.io/basic-auth",
+    "kubernetes.io/ssh-auth",
+];
+/// Types under this prefix are reserved by Kubernetes; only the
+/// [`ALLOWED_BUILTIN_SECRET_TYPES`] among them are allowed.
+pub const KUBERNETES_TYPE_PREFIX: &str = "kubernetes.io/";
+/// The bootstrap token Secret type, which is not allowed.
+pub const BOOTSTRAP_TOKEN_TYPE: &str = "bootstrap.kubernetes.io/token";
 /// Minimum length of `basicAuth.username`.
 pub const MIN_USERNAME_LEN: usize = 1;
 /// Maximum length of `basicAuth.username`.
@@ -125,8 +142,12 @@ messages! {
     MSG_DATA_COLLISION = "data keys must not collide with generated keys";
     /// `data`: valid Secret key names.
     MSG_DATA_KEY_FORMAT = "data keys must be valid Secret key names: [-._a-zA-Z0-9]+, at most 253 characters, not '.' and not starting with '..'";
-    /// `secret.labels` and `secret.annotations`: operator-owned keys.
-    MSG_RESERVED_METADATA = "labels and annotations under secretspec.jabbas.eu/ and app.kubernetes.io/managed-by are reserved";
+    /// `secret.labels` and `secret.annotations`: key length and operator-owned keys.
+    MSG_RESERVED_METADATA = "label and annotation keys must be at most 253 characters; keys under secretspec.jabbas.eu/ and app.kubernetes.io/managed-by are reserved";
+    /// root: the name is copied into the `secretspec.jabbas.eu/spec-name` label.
+    MSG_NAME_LENGTH = "metadata.name must be at most 63 characters because it is used as a label value";
+    /// `secret.type`: the Secret types the operator may create.
+    MSG_SECRET_TYPE_ALLOWED = "secret.type must be Opaque, kubernetes.io/basic-auth, kubernetes.io/ssh-auth or a custom type outside kubernetes.io/ (bootstrap tokens are not allowed)";
     /// `spec`: the `kubernetes.io/basic-auth` type contract.
     MSG_BASIC_AUTH_TYPE = r#"type kubernetes.io/basic-auth requires basicAuth with keys.username "username" and keys.password "password""#;
     /// `spec`: the `kubernetes.io/ssh-auth` type contract.

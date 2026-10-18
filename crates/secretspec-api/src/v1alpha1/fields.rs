@@ -20,7 +20,7 @@ use crate::constants::{
 ///
 /// `prefix` and `suffix` work in both modes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, KubeSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[x_kube(validation = rules::bytes_exclusive())]
 #[x_kube(validation = rules::encoding_with_bytes())]
 #[x_kube(validation = rules::alphabet_with_custom())]
@@ -48,8 +48,9 @@ pub struct FieldSpec {
     pub charset: Option<Charset>,
 
     /// Characters mode: custom alphabet, required if and only if
-    /// `charset: custom`. Printable ASCII without spaces, at most 256
-    /// characters. Example: `"0123456789"`.
+    /// `charset: custom`. At least 2 distinct printable ASCII characters (no
+    /// space), at most 256 characters; duplicates are ignored. Example:
+    /// `"0123456789"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(length(max = MAX_ALPHABET_LEN), regex(pattern = r"^[!-~]+$"))]
     pub alphabet: Option<String>,
@@ -123,7 +124,7 @@ pub enum Encoding {
 /// Minimum number of characters per class in characters mode. Each class that
 /// is required must still have at least one character left after `exclude`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, KubeSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct RequireSpec {
     /// Minimum lower-case letters (`a-z`), 0-1024.
     #[serde(default, skip_serializing_if = "Option::is_none")]

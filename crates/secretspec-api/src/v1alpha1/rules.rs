@@ -19,8 +19,8 @@ use crate::constants::{
     self, DEFAULT_LENGTH, KEY_NAME_PATTERN, MAX_KEY_NAME_LEN, MSG_ALPHABET_WITH_CUSTOM,
     MSG_BASIC_AUTH_TYPE, MSG_BYTES_EXCLUSIVE, MSG_CURVE_ONLY_ECDSA, MSG_DATA_COLLISION,
     MSG_DATA_KEY_FORMAT, MSG_ENCODING_WITH_BYTES, MSG_EXACTLY_ONE_KIND, MSG_KEYS_DISTINCT,
-    MSG_REQUIRE_SUM, MSG_RESERVED_METADATA, MSG_ROTATION_RANGE, MSG_RSA_BITS_ONLY_RSA,
-    MSG_SSH_AUTH_TYPE, MSG_TYPE_IMMUTABLE,
+    MSG_NAME_LENGTH, MSG_REQUIRE_SUM, MSG_RESERVED_METADATA, MSG_ROTATION_RANGE,
+    MSG_RSA_BITS_ONLY_RSA, MSG_SECRET_TYPE_ALLOWED, MSG_SSH_AUTH_TYPE, MSG_TYPE_IMMUTABLE,
 };
 
 /// `spec`: exactly one of `fields`, `sshKeyPair`, `basicAuth`.
@@ -155,6 +155,29 @@ pub(crate) fn ssh_auth_type() -> Rule {
          && self.sshKeyPair.keys.privateKey == 'ssh-privatekey')",
     )
     .message(MSG_SSH_AUTH_TYPE)
+}
+
+/// root: `metadata.name` fits into a label value. The API server exposes
+/// `metadata.name` to CEL rules on the root schema.
+pub(crate) fn name_length() -> Rule {
+    Rule::new(format!(
+        "size(self.metadata.name) <= {}",
+        constants::MAX_NAME_LEN
+    ))
+    .message(MSG_NAME_LENGTH)
+}
+
+/// `secret.type`: only the types the operator may create. Service-account and
+/// bootstrap tokens (and every other `kubernetes.io/` type) are rejected.
+pub(crate) fn secret_type_allowed() -> Rule {
+    let [opaque, basic, ssh] = constants::ALLOWED_BUILTIN_SECRET_TYPES;
+    Rule::new(format!(
+        "self == '{opaque}' || self == '{basic}' || self == '{ssh}' \
+         || (!self.startsWith('{}') && self != '{}')",
+        constants::KUBERNETES_TYPE_PREFIX,
+        constants::BOOTSTRAP_TOKEN_TYPE,
+    ))
+    .message(MSG_SECRET_TYPE_ALLOWED)
 }
 
 /// `secret.type`: transition rule; a Secret's type cannot change.

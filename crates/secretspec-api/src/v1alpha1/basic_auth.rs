@@ -16,7 +16,7 @@ use crate::constants::{
 ///
 /// Example for Traefik: `{username: admin, keys: {htpasswd: users}}`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, KubeSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct BasicAuthSpec {
     /// The user name, stored verbatim; there is no implicit default.
     /// Visible ASCII without `:` and without spaces, 1-253 characters.
@@ -37,7 +37,7 @@ pub struct BasicAuthSpec {
 /// Password generation options: the characters-mode options of a `fields`
 /// entry, without `name`, `bytes` and `encoding`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, KubeSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[x_kube(validation = rules::alphabet_with_custom())]
 #[x_kube(validation = rules::require_sum())]
 pub struct BasicAuthPassword {
@@ -54,8 +54,9 @@ pub struct BasicAuthPassword {
     #[schemars(transform = super::bounds::plain_enum)]
     pub charset: Option<Charset>,
 
-    /// Custom alphabet, required if and only if `charset: custom`. Printable
-    /// ASCII without spaces, at most 256 characters.
+    /// Custom alphabet, required if and only if `charset: custom`. At least 2
+    /// distinct printable ASCII characters (no space), at most 256
+    /// characters; duplicates are ignored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(length(max = MAX_ALPHABET_LEN), regex(pattern = r"^[!-~]+$"))]
     pub alphabet: Option<String>,
@@ -86,7 +87,7 @@ pub struct BasicAuthPassword {
 
 /// Secret key names for the basic-auth values.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, KubeSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[x_kube(validation = rules::basic_auth_keys_distinct())]
 pub struct BasicAuthKeys {
     /// Secret key holding the user name. Default `username`.

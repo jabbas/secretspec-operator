@@ -1,0 +1,12 @@
+# expect: secret.type must be Opaque, kubernetes.io/basic-auth, kubernetes.io/ssh-auth or a custom type outside kubernetes.io/ (bootstrap tokens are not allowed)
+# layer: cel
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: i46-type-tls
+  namespace: test
+spec:
+  secret:
+    type: kubernetes.io/tls
+  fields:
+    - name: tls.key

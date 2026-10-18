@@ -26,15 +26,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use crate::constants::{
-    DEFAULT_ECDSA_CURVE, DEFAULT_LENGTH, DEFAULT_RSA_BITS, LABEL_MANAGED_BY, MAX_AFFIX_LEN,
-    MAX_ALPHABET_LEN, MAX_COMMENT_LEN, MAX_DATA_ENTRIES, MAX_DATA_VALUE_LEN, MAX_EXCLUDE_LEN,
-    MAX_FIELDS, MAX_INTERVAL_LEN, MAX_KEY_NAME_LEN, MAX_METADATA_ENTRIES, MAX_METADATA_KEY_LEN,
-    MAX_METADATA_VALUE_LEN, MAX_RANDOM_LENGTH, MAX_REQUIRE_COUNT, MAX_TYPE_LEN, MAX_USERNAME_LEN,
-    MIN_FIELDS, MIN_RANDOM_LENGTH, MIN_USERNAME_LEN, MSG_ALPHABET_WITH_CUSTOM, MSG_BASIC_AUTH_TYPE,
-    MSG_BYTES_EXCLUSIVE, MSG_CURVE_ONLY_ECDSA, MSG_DATA_COLLISION, MSG_DATA_KEY_FORMAT,
-    MSG_ENCODING_WITH_BYTES, MSG_EXACTLY_ONE_KIND, MSG_KEYS_DISTINCT, MSG_REQUIRE_SUM,
-    MSG_RESERVED_METADATA, MSG_ROTATION_RANGE, MSG_RSA_BITS_ONLY_RSA, MSG_SSH_AUTH_TYPE,
-    RESERVED_PREFIX,
+    ALLOWED_BUILTIN_SECRET_TYPES, BOOTSTRAP_TOKEN_TYPE, DEFAULT_ECDSA_CURVE, DEFAULT_LENGTH,
+    DEFAULT_RSA_BITS, KUBERNETES_TYPE_PREFIX, LABEL_MANAGED_BY, MAX_AFFIX_LEN, MAX_ALPHABET_LEN,
+    MAX_COMMENT_LEN, MAX_DATA_ENTRIES, MAX_DATA_VALUE_LEN, MAX_EXCLUDE_LEN, MAX_FIELDS,
+    MAX_INTERVAL_LEN, MAX_KEY_NAME_LEN, MAX_METADATA_ENTRIES, MAX_METADATA_KEY_LEN,
+    MAX_METADATA_VALUE_LEN, MAX_NAME_LEN, MAX_RANDOM_LENGTH, MAX_REQUIRE_COUNT, MAX_TYPE_LEN,
+    MAX_USERNAME_LEN, MIN_FIELDS, MIN_RANDOM_LENGTH, MIN_TYPE_LEN, MIN_USERNAME_LEN,
+    MSG_ALPHABET_WITH_CUSTOM, MSG_BASIC_AUTH_TYPE, MSG_BYTES_EXCLUSIVE, MSG_CURVE_ONLY_ECDSA,
+    MSG_DATA_COLLISION, MSG_DATA_KEY_FORMAT, MSG_ENCODING_WITH_BYTES, MSG_EXACTLY_ONE_KIND,
+    MSG_KEYS_DISTINCT, MSG_NAME_LENGTH, MSG_REQUIRE_SUM, MSG_RESERVED_METADATA, MSG_ROTATION_RANGE,
+    MSG_RSA_BITS_ONLY_RSA, MSG_SECRET_TYPE_ALLOWED, MSG_SSH_AUTH_TYPE, RESERVED_PREFIX,
 };
 use crate::v1alpha1::{
     BasicAuthPassword, BasicAuthSpec, Charset, DeletionPolicy, EcdsaCurve, Encoding, FieldSpec,
@@ -60,8 +61,8 @@ pub const MSG_DATA_VALUE_LENGTH: &str = "value must be at most 65536 characters"
 pub const MSG_METADATA_MAX: &str = "must have at most 32 entries";
 /// `spec.secret.labels` and `annotations` values: at most 4096 characters.
 pub const MSG_METADATA_VALUE_LENGTH: &str = "value must be at most 4096 characters";
-/// `spec.secret.type`: at most 253 characters.
-pub const MSG_TYPE_LENGTH: &str = "must be at most 253 characters";
+/// `spec.secret.type`: 1-253 characters.
+pub const MSG_TYPE_LENGTH: &str = "must be 1-253 characters";
 /// `length` and `bytes`: 1-1024.
 pub const MSG_RANDOM_RANGE: &str = "must be between 1 and 1024";
 /// `require.<class>`: 0-1024.
@@ -280,7 +281,8 @@ fn chars_entropy(chars: &CharsParams) -> f64 {
 /// Applies every default and checks every rule.
 ///
 /// `name` and `namespace` are those of the `SecretSpec`; they form the default
-/// SSH comment. Never panics.
+/// SSH comment, and `name` is checked against the root rule `metadata.name`
+/// (at most 63 characters). Never panics.
 ///
 /// # Errors
 /// [`InvalidSpec`] listing every violated rule.
@@ -290,6 +292,10 @@ pub fn resolve(
     namespace: &str,
 ) -> Result<ResolvedSpec, InvalidSpec> {
     let mut errs = Errors::default();
+
+    if name.chars().count() > MAX_NAME_LEN {
+        errs.add("metadata.name", MSG_NAME_LENGTH);
+    }
 
     let kinds = [
         spec.fields.is_some(),
@@ -447,10 +453,20 @@ fn check_data(spec: &SecretSpecSpec, errs: &mut Errors) {
     }
 }
 
+/// The CEL rule of `secret.type`: an allowed built-in type, or a custom type
+/// outside `kubernetes.io/` that is not the bootstrap token type.
+fn is_allowed_secret_type(secret_type: &str) -> bool {
+    ALLOWED_BUILTIN_SECRET_TYPES.contains(&secret_type)
+        || (!secret_type.starts_with(KUBERNETES_TYPE_PREFIX) && secret_type != BOOTSTRAP_TOKEN_TYPE)
+}
+
 fn check_secret_template(spec: &SecretSpecSpec, errs: &mut Errors) {
     let secret = &spec.secret;
-    if secret.type_.chars().count() > MAX_TYPE_LEN {
+    if !(MIN_TYPE_LEN..=MAX_TYPE_LEN).contains(&secret.type_.chars().count()) {
         errs.add("spec.secret.type", MSG_TYPE_LENGTH);
+    }
+    if !is_allowed_secret_type(&secret.type_) {
+        errs.add("spec.secret.type", MSG_SECRET_TYPE_ALLOWED);
     }
     // `secret.type` immutability (a transition rule) needs the old object;
     // `resolve` has none, so it is enforced by the API server only.

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 /// comment. The comment is excluded from the fingerprint: changing it only
 /// rewrites the public-key line.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, KubeSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[x_kube(validation = rules::rsa_bits_only_rsa())]
 #[x_kube(validation = rules::curve_only_ecdsa())]
 pub struct SshKeyPairSpec {
@@ -132,7 +132,7 @@ pub enum EcdsaCurve {
 
 /// Secret key names for the SSH key pair.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, KubeSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[x_kube(validation = rules::ssh_keys_distinct())]
 pub struct SshKeys {
     /// Secret key holding the private key. Default `ssh-privatekey`.

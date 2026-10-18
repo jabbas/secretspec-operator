@@ -12,6 +12,13 @@ mod status;
 // Doc-comment convention: enums use plain `//` comments at type level. A `///`
 // on an enum becomes its schema description and overrides the description of
 // every field that uses it in the generated CRD, hiding the field's own docs.
+//
+// No type here uses `#[serde(deny_unknown_fields)]`, on purpose. The API server
+// already prunes fields the installed CRD does not know; a field the Rust types
+// do not know can therefore only come from a CRD newer than the running image
+// (an upgrade or rollback in progress). Rejecting it would make every watch
+// event of every object fail to deserialize. Tests stay strict instead: the
+// fixture loader (`tests/common`) rejects keys the generated CRD does not know.
 
 use std::collections::BTreeMap;
 
@@ -21,7 +28,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::constants::{
     MAX_DATA_ENTRIES, MAX_DATA_VALUE_LEN, MAX_FIELDS, MAX_INTERVAL_LEN, MAX_METADATA_ENTRIES,
-    MAX_METADATA_VALUE_LEN, MAX_TYPE_LEN, MIN_FIELDS,
+    MAX_METADATA_VALUE_LEN, MAX_TYPE_LEN, MIN_FIELDS, MIN_TYPE_LEN,
 };
 
 pub use basic_auth::{BasicAuthKeys, BasicAuthPassword, BasicAuthSpec};
@@ -58,6 +65,15 @@ pub use status::{SecretKind, SecretSpecStatus};
     namespaced,
     status = "SecretSpecStatus",
     derive = "PartialEq",
+    doc = "A SecretSpec declares one Kubernetes Secret that the secretspec operator \
+           generates and keeps in sync. The operator creates a Secret with the same \
+           name in the same namespace and fills it with generated values: exactly one \
+           of spec.fields (random strings and tokens), spec.sshKeyPair (an SSH key \
+           pair) or spec.basicAuth (a username, a password and an htpasswd line) must \
+           be set. Generated values stay stable until their generation parameters \
+           change or a scheduled rotation is due. The name must be at most 63 \
+           characters because it is also used as a label value.",
+    validation = rules::name_length(),
     printcolumn(
         name = "Ready",
         type_ = "string",
@@ -75,7 +91,7 @@ pub use status::{SecretKind, SecretSpecStatus};
         json_path = ".metadata.creationTimestamp"
     )
 )]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 #[x_kube(validation = rules::exactly_one_kind())]
 #[x_kube(validation = rules::data_collision())]
 #[x_kube(validation = rules::basic_auth_type())]
@@ -139,7 +155,7 @@ pub enum DeletionPolicy {
 
 /// Scheduled rotation of all generated values.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, KubeSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct RotationSpec {
     /// How often to regenerate every generated value: a positive integer
     /// followed by `m` (minutes), `h` (hours) or `d` (days). Minimum `1h`,
@@ -151,15 +167,20 @@ pub struct RotationSpec {
 
 /// Metadata of the generated Secret.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, KubeSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct SecretTemplate {
-    /// Kubernetes Secret type. Default `Opaque`. Immutable after creation
-    /// because the Secret type is immutable. `kubernetes.io/basic-auth`
-    /// requires `basicAuth` with the default `username` and `password` keys;
+    /// Kubernetes Secret type. Default `Opaque`. Allowed: `Opaque`,
+    /// `kubernetes.io/basic-auth`, `kubernetes.io/ssh-auth`, or a custom type
+    /// (1-253 characters) that does not start with `kubernetes.io/` and is
+    /// not `bootstrap.kubernetes.io/token`; other built-in types such as
+    /// service-account tokens are rejected. Immutable after creation because
+    /// the Secret type is immutable. `kubernetes.io/basic-auth` requires
+    /// `basicAuth` with the default `username` and `password` keys;
     /// `kubernetes.io/ssh-auth` requires `sshKeyPair` with the default
     /// `ssh-privatekey` private key.
     #[serde(rename = "type", default = "default_secret_type")]
-    #[schemars(length(max = MAX_TYPE_LEN))]
+    #[schemars(length(min = MIN_TYPE_LEN, max = MAX_TYPE_LEN))]
+    #[x_kube(validation = rules::secret_type_allowed())]
     #[x_kube(validation = rules::type_immutable())]
     pub type_: String,
 

@@ -15,6 +15,10 @@
 //! For schema-layer fixtures `# expect:` is the offending JSON path (the API
 //! server and `resolve()` both report it) and `# server-expect:` pins the
 //! server's own wording for the server-side suite, falling back to `# expect:`.
+//!
+//! Loading is strict: a fixture with a key the generated CRD does not declare
+//! fails the test ([`unknown_keys`]), because the production types ignore
+//! unknown fields.
 #![allow(dead_code, clippy::expect_used, clippy::unwrap_used)] // each test binary uses a different subset
 
 use std::path::PathBuf;
@@ -42,6 +46,61 @@ pub struct Fixture {
     pub layer: Layer,
     /// The parsed manifest.
     pub value: serde_json::Value,
+}
+
+/// Every key of `manifest` that the generated CRD schema does not declare, as
+/// a JSON path. The production types ignore unknown fields (see the comment in
+/// `v1alpha1/mod.rs`), so this is what keeps a fixture typo from silently
+/// testing the default instead of the intended value.
+pub fn unknown_keys(manifest: &serde_json::Value) -> Vec<String> {
+    use kube::CustomResourceExt;
+    use serde_json::Value;
+
+    fn walk(schema: &Value, value: &Value, path: &str, out: &mut Vec<String>) {
+        match value {
+            Value::Object(map) => {
+                let props = schema.get("properties").and_then(Value::as_object);
+                let additional = schema.get("additionalProperties").filter(|a| a.is_object());
+                for (key, child) in map {
+                    let child_path = format!("{path}.{key}");
+                    if let Some(child_schema) = props.and_then(|p| p.get(key)) {
+                        walk(child_schema, child, &child_path, out);
+                    } else if let Some(child_schema) = additional {
+                        walk(child_schema, child, &child_path, out);
+                    } else {
+                        out.push(child_path);
+                    }
+                }
+            }
+            Value::Array(items) => {
+                if let Some(item_schema) = schema.get("items") {
+                    for (i, item) in items.iter().enumerate() {
+                        walk(item_schema, item, &format!("{path}[{i}]"), out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let crd =
+        serde_json::to_value(secretspec_api::v1alpha1::SecretSpec::crd()).expect("crd serialises");
+    let root = &crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"];
+    let mut out = Vec::new();
+    let Value::Object(map) = manifest else {
+        return vec!["<root is not an object>".to_owned()];
+    };
+    for (key, child) in map {
+        match key.as_str() {
+            // Validated by the API server, not part of the CRD schema.
+            "apiVersion" | "kind" | "metadata" => {}
+            _ => match root["properties"].get(key) {
+                Some(schema) => walk(schema, child, key, &mut out),
+                None => out.push(key.clone()),
+            },
+        }
+    }
+    out
 }
 
 /// Loads every `*.yaml` fixture in `tests/fixtures/<dir>/`, sorted by file name.
@@ -76,6 +135,12 @@ pub fn load(dir: &str) -> Vec<Fixture> {
             };
             let value = serde_norway::from_str(&text)
                 .unwrap_or_else(|e| panic!("{}: invalid YAML: {e}", file.display()));
+            let unknown = unknown_keys(&value);
+            assert!(
+                unknown.is_empty(),
+                "{}: keys unknown to the CRD (typo?): {unknown:?}",
+                file.display()
+            );
             Fixture {
                 file: file
                     .file_name()

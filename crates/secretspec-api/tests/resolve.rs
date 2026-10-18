@@ -9,8 +9,8 @@ mod common;
 use std::time::Duration;
 
 use secretspec_api::constants::{
-    ALL_MESSAGES, MSG_ALPHABET_WITH_CUSTOM, MSG_DATA_COLLISION, MSG_KEYS_DISTINCT, MSG_REQUIRE_SUM,
-    MSG_ROTATION_RANGE, MSG_TYPE_IMMUTABLE,
+    ALL_MESSAGES, MSG_ALPHABET_WITH_CUSTOM, MSG_DATA_COLLISION, MSG_KEYS_DISTINCT, MSG_NAME_LENGTH,
+    MSG_REQUIRE_SUM, MSG_ROTATION_RANGE, MSG_SECRET_TYPE_ALLOWED, MSG_TYPE_IMMUTABLE,
 };
 use secretspec_api::resolve::{
     BytesParams, CharsParams, Generator, InvalidSpec, Require, ResolvedBasicAuth, ResolvedField,
@@ -547,6 +547,10 @@ fn schema_bounds_are_enforced() {
             "spec.secret.type",
         ),
         (
+            "secret: {type: ''}\nfields: [{name: p}]".to_owned(),
+            "spec.secret.type: must be 1-253 characters",
+        ),
+        (
             format!("data: {{k: {}}}\nfields: [{{name: p}}]", "v".repeat(65_537)),
             "spec.data[k]",
         ),
@@ -593,6 +597,36 @@ fn type_contracts_are_rechecked() {
         "secret: {type: kubernetes.io/basic-auth}\nbasicAuth: {username: u, keys: {password: pw}}",
     );
     assert!(err.contains("kubernetes.io/basic-auth requires"), "{err}");
+}
+
+#[test]
+fn name_length_is_checked() {
+    let spec = inline_spec("fields: [{name: p}]");
+    resolve(&spec, &"n".repeat(63), "ns").expect("63 characters are fine");
+    let err = resolve(&spec, &"n".repeat(64), "ns").expect_err("64 characters");
+    assert_eq!(
+        err.errors,
+        vec![format!("metadata.name: {MSG_NAME_LENGTH}")]
+    );
+}
+
+#[test]
+fn secret_type_allow_list_is_rechecked() {
+    for bad in [
+        "kubernetes.io/service-account-token",
+        "kubernetes.io/tls",
+        "bootstrap.kubernetes.io/token",
+    ] {
+        let err = inline_error(&format!("secret: {{type: {bad}}}\nfields: [{{name: p}}]"));
+        assert!(
+            err.contains(&format!("spec.secret.type: {MSG_SECRET_TYPE_ALLOWED}")),
+            "{bad}: {err}"
+        );
+    }
+    assert_eq!(
+        resolve_inline("secret: {type: example.com/thing}\nfields: [{name: p}]").secret_type,
+        "example.com/thing"
+    );
 }
 
 #[test]

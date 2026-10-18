@@ -144,10 +144,14 @@ spec:
 |---|---|---|---|---|
 | `deletionPolicy` | enum `Delete` \| `Retain` | `Delete` | See §6. | [owner] |
 | `rotation.interval` | string, pattern `^[1-9][0-9]*(m\|h\|d)$` | none (no rotation) | Minimum `1h`, maximum `3650d`. | [owner: feature; architect: format/limits] |
-| `secret.type` | string | `Opaque` | Immutable after creation (CEL `self == oldSelf`), because the Kubernetes Secret type is immutable. `kubernetes.io/basic-auth` is allowed only with `basicAuth` where `keys.username` = `username` and `keys.password` = `password`. `kubernetes.io/ssh-auth` is allowed only with `sshKeyPair` where `keys.privateKey` = `ssh-privatekey`. | [architect] |
+| `secret.type` | string, 1–253 characters | `Opaque` | Allowed (CEL): `Opaque`, `kubernetes.io/basic-auth`, `kubernetes.io/ssh-auth`, or any custom type that does not start with `kubernetes.io/` and is not `bootstrap.kubernetes.io/token`. This keeps the operator from minting service-account or bootstrap tokens and other built-in types whose contracts it does not implement. Frozen message: "secret.type must be Opaque, kubernetes.io/basic-auth, kubernetes.io/ssh-auth or a custom type outside kubernetes.io/ (bootstrap tokens are not allowed)". Immutable after creation (CEL `self == oldSelf`), because the Kubernetes Secret type is immutable. `kubernetes.io/basic-auth` is allowed only with `basicAuth` where `keys.username` = `username` and `keys.password` = `password`. `kubernetes.io/ssh-auth` is allowed only with `sshKeyPair` where `keys.privateKey` = `ssh-privatekey`. | [architect] |
 | `secret.labels`, `secret.annotations` | map string→string | `{}` | Keys under the `secretspec.jabbas.eu/` prefix are reserved and rejected (CEL). `app.kubernetes.io/managed-by` is rejected. | [architect] |
 | `data` | map string→string | `{}` | Keys MUST be valid Secret key names: `^[-._a-zA-Z0-9]+$`, at most 253 characters, not `.` and not starting with `..` (the same rule applies to `fields[].name` and every `keys.*` value). Keys MUST NOT collide with any generated key. This is checked by CEL where it can be expressed; otherwise at runtime as `InvalidSpec`. | [owner: literals; architect: rules] |
 | `fields` \| `sshKeyPair` \| `basicAuth` | see §4.2–§4.4 | — | Exactly one MUST be set (CEL). | [owner] |
+
+**Name length [architect]:** `metadata.name` MUST be at most 63 characters (root CEL rule `size(self.metadata.name) <= 63`, re-checked by `resolve()`), because the name is copied into the `secretspec.jabbas.eu/spec-name` label and label values are limited to 63 characters. Frozen message: "metadata.name must be at most 63 characters because it is used as a label value".
+
+**Label/annotation keys:** at most 253 characters; the reserved-key rule and the length limit share one frozen message: "label and annotation keys must be at most 253 characters; keys under secretspec.jabbas.eu/ and app.kubernetes.io/managed-by are reserved".
 
 ### 4.2 `fields[]` — generated strings and tokens
 
@@ -162,7 +166,7 @@ The `name` + `length` shape is **[owner]**. All other options are **[architect]*
 | `name` | required | The Secret key. MUST match the key regex and be unique. |
 | `length` | `32` | Number of random characters, 1–1024. Does NOT include `prefix` / `suffix`. |
 | `charset` | `alphanumeric` | `alphanumeric` (a-z A-Z 0-9) \| `ascii` (alphanumeric + ASCII punctuation) \| `hex` (0-9a-f) \| `custom` |
-| `alphabet` | — | Required if and only if `charset: custom`. 2–256 distinct printable ASCII characters. |
+| `alphabet` | — | Required if and only if `charset: custom`. At least 2 distinct printable ASCII characters (no space), at most 256 characters; duplicates are ignored. |
 | `exclude` | `""` | Characters removed from the effective alphabet (e.g. `/@" ` for AWS RDS). |
 | `require` | none | `{lower, upper, digits, symbols}`: minimum counts per class (integers ≥ 0). The sum MUST be ≤ `length`. |
 
