@@ -1,5 +1,6 @@
 # expect: spec.fields[0].length
 # layer: schema
+# server-expect: should be greater than or equal to 1
 apiVersion: secretspec.jabbas.eu/v1alpha1
 kind: SecretSpec
 metadata:

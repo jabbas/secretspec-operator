@@ -1,5 +1,6 @@
 # expect: spec.fields[0].prefix
 # layer: schema
+# server-expect: should match '^[!-~]*$'
 apiVersion: secretspec.jabbas.eu/v1alpha1
 kind: SecretSpec
 metadata:

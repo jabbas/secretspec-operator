@@ -1,5 +1,6 @@
 # expect: spec.sshKeyPair.comment
 # layer: schema
+# server-expect: should match '^[ -~]*$'
 apiVersion: secretspec.jabbas.eu/v1alpha1
 kind: SecretSpec
 metadata:
