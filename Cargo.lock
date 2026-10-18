@@ -2318,6 +2318,8 @@ dependencies = [
  "data-encoding",
  "hex",
  "hmac 0.13.0",
+ "jiff",
+ "k8s-openapi",
  "rand_chacha",
  "rand_core",
  "secretspec-api",

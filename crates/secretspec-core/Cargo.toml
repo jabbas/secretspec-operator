@@ -16,6 +16,10 @@ bcrypt = "0.19"
 data-encoding.workspace = true
 hex.workspace = true
 hmac.workspace = true
+# The timestamp type inside k8s-openapi's `Time`; keep the same 0.2 line so
+# both resolve to one copy.
+jiff = { version = "0.2.38", default-features = false, features = ["alloc"] }
+k8s-openapi.workspace = true
 rand_chacha.workspace = true
 rand_core.workspace = true
 serde_json.workspace = true
