@@ -2,12 +2,15 @@
 
 //! Random characters from an alphabet with per-class minimums.
 
-use rand_core::CryptoRng;
+use rand_core::CryptoRngCore;
 use secretspec_api::resolve::CharsParams;
 use zeroize::Zeroizing;
 
 use super::GenerateError;
 use crate::value::SecretValue;
+
+/// Largest `n` accepted by [`uniform_below`] (two bytes of entropy).
+const MAX_INDEX_RANGE: usize = 65_536;
 
 /// A character class: name, required count, membership test.
 type Class = (&'static str, u16, fn(&u8) -> bool);
@@ -19,8 +22,8 @@ type Class = (&'static str, u16, fn(&u8) -> bool);
 /// `x >= n * floor(range / n)`; otherwise the result is `x % n`. The accepted
 /// region is a whole number of copies of `0..n`, so every outcome is equally
 /// likely — plain `x % n` would favor small values.
-fn uniform_below<R: CryptoRng + ?Sized>(rng: &mut R, n: usize) -> usize {
-    debug_assert!((1..=65_536).contains(&n));
+fn uniform_below<R: CryptoRngCore + ?Sized>(rng: &mut R, n: usize) -> usize {
+    debug_assert!((1..=MAX_INDEX_RANGE).contains(&n));
     // `n <= 65_536`, so the conversion cannot fail.
     let n = u32::try_from(n).unwrap_or(65_536);
     if n == 1 {
@@ -44,7 +47,7 @@ fn uniform_below<R: CryptoRng + ?Sized>(rng: &mut R, n: usize) -> usize {
     }
 }
 
-fn pick<R: CryptoRng + ?Sized>(rng: &mut R, set: &[u8]) -> u8 {
+fn pick<R: CryptoRngCore + ?Sized>(rng: &mut R, set: &[u8]) -> u8 {
     set[uniform_below(rng, set.len())]
 }
 
@@ -54,20 +57,37 @@ fn pick<R: CryptoRng + ?Sized>(rng: &mut R, set: &[u8]) -> u8 {
 /// characters drawn from `alphabet ∩ class`; the remaining
 /// `length − Σrequire` characters come from the whole alphabet. The body is
 /// then Fisher–Yates shuffled with the same RNG, and wrapped in
-/// `prefix`/`suffix`. If the required counts alone exceed `length` the body
-/// is as long as the required counts (the resolver rejects that case).
+/// `prefix`/`suffix`.
+///
+/// Precondition: `p.alphabet` is sorted and contains each byte at most once
+/// (as produced by the resolver). Duplicates would silently weight those
+/// characters; the generator does not re-check this.
 ///
 /// # Errors
 ///
 /// [`GenerateError::AlphabetTooSmall`] if the alphabet has fewer than two
-/// characters; [`GenerateError::EmptyClass`] if a required class has no
-/// member in the alphabet.
-pub fn generate_chars<R: CryptoRng + ?Sized>(
+/// characters; [`GenerateError::AlphabetTooLarge`] if it has more entries
+/// than the index sampler supports (65 536);
+/// [`GenerateError::RequireExceedsLength`] if the per-class minimums add up
+/// to more than `length` (the output is never lengthened or clamped);
+/// [`GenerateError::EmptyClass`] if a required class has no member in the
+/// alphabet.
+pub fn generate_chars<R: CryptoRngCore + ?Sized>(
     p: &CharsParams,
     rng: &mut R,
 ) -> Result<SecretValue, GenerateError> {
     if p.alphabet.len() < 2 {
         return Err(GenerateError::AlphabetTooSmall);
+    }
+    if p.alphabet.len() > MAX_INDEX_RANGE {
+        return Err(GenerateError::AlphabetTooLarge);
+    }
+    let required = u32::from(p.require.lower)
+        + u32::from(p.require.upper)
+        + u32::from(p.require.digits)
+        + u32::from(p.require.symbols);
+    if required > u32::from(p.length) {
+        return Err(GenerateError::RequireExceedsLength);
     }
 
     let classes: [Class; 4] = [

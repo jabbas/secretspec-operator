@@ -4,9 +4,10 @@
 
 mod support;
 
+use rand_core::RngCore;
 use secretspec_api::resolve::{BytesParams, CharsParams, Require};
 use secretspec_api::v1alpha1::Encoding;
-use secretspec_core::generate::{GenerateError, generate_bytes, generate_chars};
+use secretspec_core::generate::{GenerateError, generate_bytes, generate_chars, os_seeded_rng};
 use support::seeded_rng;
 
 fn alnum() -> Vec<u8> {
@@ -140,8 +141,8 @@ fn chars_uniformity_non_power_of_two() {
 
 #[test]
 fn chars_shuffle_uniform_over_long_bodies() {
-    // length 300 > 256 exercises the two-byte index path. The one required
-    // digit must land in each third of the string about equally often.
+    // length 300 > 256 exercises the two-byte index path. Digit positions
+    // must fall in each third of the string about equally often.
     let alphabet: Vec<u8> = (b'a'..=b'z').chain(b'0'..=b'9').collect();
     let p = chars(
         300,
@@ -156,7 +157,9 @@ fn chars_shuffle_uniform_over_long_bodies() {
     let trials = 9_000;
     for _ in 0..trials {
         let v = generate_chars(&p, &mut rng).unwrap();
-        // Count only strings where the required digit is the single digit.
+        // Digits also come from the unconstrained remainder, so a body may
+        // hold several; all of them are exchangeable, so count every digit
+        // position.
         let digits: Vec<usize> = v
             .expose()
             .iter()
@@ -200,6 +203,79 @@ fn chars_errors() {
         generate_chars(&p, &mut seeded_rng(0)),
         Err(GenerateError::EmptyClass("upper"))
     ));
+}
+
+#[test]
+fn chars_require_exceeds_length_is_error() {
+    let p = chars(
+        10,
+        v12_alphabet(),
+        Require {
+            lower: 4,
+            upper: 4,
+            digits: 2,
+            symbols: 1,
+        },
+    );
+    assert!(matches!(
+        generate_chars(&p, &mut seeded_rng(0)),
+        Err(GenerateError::RequireExceedsLength)
+    ));
+
+    // Exactly filling the length is fine.
+    let p = chars(
+        4,
+        v12_alphabet(),
+        Require {
+            lower: 1,
+            upper: 1,
+            digits: 1,
+            symbols: 1,
+        },
+    );
+    assert_eq!(
+        generate_chars(&p, &mut seeded_rng(0))
+            .unwrap()
+            .expose()
+            .len(),
+        4
+    );
+
+    // Sums that would overflow u16 must not wrap around.
+    let p = chars(
+        10,
+        v12_alphabet(),
+        Require {
+            lower: u16::MAX,
+            upper: u16::MAX,
+            digits: 0,
+            symbols: 0,
+        },
+    );
+    assert!(matches!(
+        generate_chars(&p, &mut seeded_rng(0)),
+        Err(GenerateError::RequireExceedsLength)
+    ));
+}
+
+#[test]
+fn chars_oversized_alphabet_is_error() {
+    let p = chars(8, vec![b'a'; 65_537], Require::default());
+    assert!(matches!(
+        generate_chars(&p, &mut seeded_rng(0)),
+        Err(GenerateError::AlphabetTooLarge)
+    ));
+}
+
+#[test]
+fn os_seeded_rng_works() {
+    let mut a = os_seeded_rng().unwrap();
+    let mut b = os_seeded_rng().unwrap();
+    assert_ne!(a.next_u64(), b.next_u64());
+
+    let p = chars(32, alnum(), Require::default());
+    let v = generate_chars(&p, &mut a).unwrap();
+    assert_eq!(v.expose().len(), 32);
 }
 
 #[test]

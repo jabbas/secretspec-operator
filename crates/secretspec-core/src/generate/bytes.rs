@@ -3,7 +3,7 @@
 //! Random bytes in a text encoding.
 
 use data_encoding::{BASE32, BASE64, BASE64URL, HEXLOWER};
-use rand_core::CryptoRng;
+use rand_core::CryptoRngCore;
 use secretspec_api::resolve::BytesParams;
 use secretspec_api::v1alpha1::Encoding;
 use zeroize::Zeroizing;
@@ -18,7 +18,7 @@ use crate::value::SecretValue;
 ///
 /// Currently infallible; the `Result` keeps the signature uniform with the
 /// other generators.
-pub fn generate_bytes<R: CryptoRng + ?Sized>(
+pub fn generate_bytes<R: CryptoRngCore + ?Sized>(
     p: &BytesParams,
     rng: &mut R,
 ) -> Result<SecretValue, GenerateError> {
