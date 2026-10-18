@@ -146,7 +146,7 @@ spec:
 | `rotation.interval` | string, pattern `^[1-9][0-9]*(m\|h\|d)$` | none (no rotation) | Minimum `1h`, maximum `3650d`. | [owner: feature; architect: format/limits] |
 | `secret.type` | string | `Opaque` | Immutable after creation (CEL `self == oldSelf`), because the Kubernetes Secret type is immutable. `kubernetes.io/basic-auth` is allowed only with `basicAuth` where `keys.username` = `username` and `keys.password` = `password`. `kubernetes.io/ssh-auth` is allowed only with `sshKeyPair` where `keys.privateKey` = `ssh-privatekey`. | [architect] |
 | `secret.labels`, `secret.annotations` | map string→string | `{}` | Keys under the `secretspec.jabbas.eu/` prefix are reserved and rejected (CEL). `app.kubernetes.io/managed-by` is rejected. | [architect] |
-| `data` | map string→string | `{}` | Keys MUST match the Secret key regex `^[-._a-zA-Z0-9]+$`. Keys MUST NOT collide with any generated key. This is checked by CEL where it can be expressed; otherwise at runtime as `InvalidSpec`. | [owner: literals; architect: rules] |
+| `data` | map string→string | `{}` | Keys MUST be valid Secret key names: `^[-._a-zA-Z0-9]+$`, at most 253 characters, not `.` and not starting with `..` (the same rule applies to `fields[].name` and every `keys.*` value). Keys MUST NOT collide with any generated key. This is checked by CEL where it can be expressed; otherwise at runtime as `InvalidSpec`. | [owner: literals; architect: rules] |
 | `fields` \| `sshKeyPair` \| `basicAuth` | see §4.2–§4.4 | — | Exactly one MUST be set (CEL). | [owner] |
 
 ### 4.2 `fields[]` — generated strings and tokens
