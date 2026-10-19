@@ -16,10 +16,11 @@ clap.workspace = true
 secretspec-api = { path = "../secretspec-api" }
 secretspec-core = { path = "../secretspec-core" }
 # The timestamp type inside k8s-openapi's `Time`; same 0.2 line as secretspec-core.
-jiff = { version = "0.2.38", default-features = false, features = ["alloc"] }
+jiff = { version = "0.2.38", default-features = false, features = ["alloc", "std"] }
 k8s-openapi.workspace = true
 # `ring` is the single rustls crypto provider used across the workspace.
 kube = { workspace = true, features = ["client", "runtime", "rustls-tls", "ring"] }
+prometheus-client.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }

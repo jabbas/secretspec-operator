@@ -101,25 +101,28 @@ pub fn requeue_after(planned: Option<Duration>, resync: Duration) -> Duration {
 /// class, never the inner error's text.
 #[must_use]
 pub fn apply_failed_message(err: &kube::Error) -> String {
+    format!("apply of Secret failed: {}", kube_error_summary(err))
+}
+
+/// A body-free summary of a kube client error: the HTTP code and
+/// machine-readable reason for an API-server rejection, otherwise a fixed
+/// string naming the error class. Never the server's message or the inner
+/// error's text, which can echo request data.
+#[must_use]
+pub fn kube_error_summary(err: &kube::Error) -> String {
     match err {
-        kube::Error::Api(status) => {
-            format!("apply of Secret failed: {} {}", status.code, status.reason)
-        }
+        kube::Error::Api(status) => format!("{} {}", status.code, status.reason),
         kube::Error::HyperError(_)
         | kube::Error::Service(_)
         | kube::Error::HttpError(_)
-        | kube::Error::ReadEvents(_) => "apply of Secret failed: transport error".to_owned(),
+        | kube::Error::ReadEvents(_) => "transport error".to_owned(),
         kube::Error::SerdeError(_) | kube::Error::FromUtf8(_) => {
-            "apply of Secret failed: response could not be decoded".to_owned()
+            "response could not be decoded".to_owned()
         }
-        kube::Error::RustlsTls(_) | kube::Error::TlsRequired => {
-            "apply of Secret failed: TLS error".to_owned()
-        }
-        kube::Error::Auth(_) => "apply of Secret failed: authentication error".to_owned(),
-        kube::Error::BuildRequest(_) => {
-            "apply of Secret failed: request could not be built".to_owned()
-        }
-        _ => "apply of Secret failed: client error".to_owned(),
+        kube::Error::RustlsTls(_) | kube::Error::TlsRequired => "TLS error".to_owned(),
+        kube::Error::Auth(_) => "authentication error".to_owned(),
+        kube::Error::BuildRequest(_) => "request could not be built".to_owned(),
+        _ => "client error".to_owned(),
     }
 }
 

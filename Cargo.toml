@@ -31,6 +31,7 @@ rand_chacha = "0.3"
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
 tracing = "0.1"
+prometheus-client = "0.25"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt", "ansi", "json", "env-filter"] }
 
 [workspace.lints.rust]
