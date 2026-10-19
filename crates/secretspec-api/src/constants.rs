@@ -10,6 +10,10 @@ use crate::v1alpha1::EcdsaCurve;
 
 /// API group of the `SecretSpec` resource.
 pub const GROUP: &str = "secretspec.jabbas.eu";
+/// API version of the `SecretSpec` resource served by this crate.
+pub const VERSION: &str = "v1alpha1";
+/// Kind of the `SecretSpec` resource.
+pub const KIND: &str = "SecretSpec";
 
 /// Label marking Secrets owned by the operator.
 pub const LABEL_MANAGED_BY: &str = "app.kubernetes.io/managed-by";
@@ -24,6 +28,48 @@ pub const ANNOTATION_FINGERPRINTS: &str = "secretspec.jabbas.eu/fingerprints";
 pub const ANNOTATION_GENERATED_AT: &str = "secretspec.jabbas.eu/generated-at";
 /// Annotation holding the UID of the `SecretSpec` that owns the Secret.
 pub const ANNOTATION_SPEC_UID: &str = "secretspec.jabbas.eu/spec-uid";
+
+/// Annotation holding the JSON map of role -> Secret key currently holding
+/// that role's value, so that renaming `keys.*` moves the value instead of
+/// regenerating it.
+pub const ANNOTATION_KEYS: &str = "secretspec.jabbas.eu/keys";
+
+/// Event reason: a Secret was generated.
+pub const EVENT_GENERATED: &str = "Generated";
+/// Event reason: values were regenerated.
+pub const EVENT_REGENERATED: &str = "Regenerated";
+/// Event reason: scheduled rotation ran.
+pub const EVENT_ROTATED: &str = "Rotated";
+/// Event reason: an existing Secret was adopted.
+pub const EVENT_ADOPTED: &str = "Adopted";
+/// Event reason: the target Secret is not operator-managed.
+pub const EVENT_CONFLICT: &str = "Conflict";
+/// Event reason: the spec failed validation.
+pub const EVENT_INVALID_SPEC: &str = "InvalidSpec";
+/// Event reason: a generated value has low entropy.
+pub const EVENT_LOW_ENTROPY: &str = "LowEntropy";
+/// Event reason: the fingerprint annotation was unreadable and was reset.
+pub const EVENT_FINGERPRINTS_RESET: &str = "FingerprintsReset";
+/// Event reason: the rotation anchor was unreadable and was reset.
+pub const EVENT_ANCHOR_RESET: &str = "AnchorReset";
+/// Event reason: applying the Secret failed.
+pub const EVENT_APPLY_FAILED: &str = "ApplyFailed";
+/// Event reason: a generated `basicAuth` password is longer than the 72
+/// bytes that bcrypt hashes, so the htpasswd line covers only its prefix.
+pub const EVENT_PASSWORD_TRUNCATED: &str = "PasswordTruncated";
+
+/// Name of the status condition reporting readiness.
+pub const CONDITION_READY: &str = "Ready";
+/// `Ready` reason: the Secret is generated and up to date.
+pub const REASON_GENERATED: &str = "Generated";
+/// `Ready` reason: the target Secret is not operator-managed.
+pub const REASON_CONFLICT: &str = "Conflict";
+/// `Ready` reason: the spec failed validation.
+pub const REASON_INVALID_SPEC: &str = "InvalidSpec";
+/// `Ready` reason: applying the Secret failed.
+pub const REASON_APPLY_FAILED: &str = "ApplyFailed";
+/// `Ready` reason: waiting for the previous owner's garbage collection.
+pub const REASON_WAITING_FOR_GC: &str = "WaitingForGarbageCollection";
 
 /// Label and annotation keys under this prefix are reserved for the operator.
 pub const RESERVED_PREFIX: &str = "secretspec.jabbas.eu/";

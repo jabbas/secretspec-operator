@@ -4,6 +4,12 @@ all-features = true
 [advisories]
 unmaintained = "all"
 yanked = "deny"
+ignore = [
+    # RSA timing side channel in private-key *operations* (Marvin Attack), no
+    # patched release. The operator only generates RSA keys (via `ssh-key`) and
+    # never performs private-key operations (no signing or decryption).
+    { id = "RUSTSEC-2023-0071", reason = "the operator only generates RSA keys and never performs private-key operations" },
+]
 
 [licenses]
 allow = [

@@ -38,6 +38,7 @@ fn crd_has_expected_identity() {
     assert_eq!(spec["group"], secretspec_api::constants::GROUP);
     assert_eq!(spec["scope"], "Namespaced");
     assert_eq!(spec["names"]["kind"], "SecretSpec");
+    assert_eq!(spec["names"]["kind"], secretspec_api::constants::KIND);
     assert_eq!(spec["names"]["plural"], "secretspecs");
     assert_eq!(spec["names"]["shortNames"], json!(["ss"]));
 
@@ -45,6 +46,7 @@ fn crd_has_expected_identity() {
     assert_eq!(versions.len(), 1);
     let v = &versions[0];
     assert_eq!(v["name"], "v1alpha1");
+    assert_eq!(v["name"], secretspec_api::constants::VERSION);
     assert_eq!(v["served"], true);
     assert_eq!(v["storage"], true);
     assert!(
