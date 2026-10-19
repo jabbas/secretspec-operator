@@ -178,8 +178,10 @@ every value of the Secret):
    string cannot be preserved; it is dropped and reported.
 3. **An invalid value invalidates only its own slot.** If a known slot's value
    is not a string of exactly 64 lowercase hex characters, that slot counts as
-   having no stored fingerprint (so only that value is regenerated) and the
-   problem is reported. All other entries are used normally.
+   having no stored fingerprint (so, as for lost metadata in design §7.2 row
+   16, a present value is kept and its fingerprint re-stamped with a Warning
+   `FingerprintsReset`, and a missing value is generated) and the problem is
+   reported. All other entries are used normally.
 
 The reference implementation is `FingerprintMap::from_annotation`, which
 returns the usable map plus the list of problems.
