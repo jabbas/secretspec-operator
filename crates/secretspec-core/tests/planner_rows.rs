@@ -175,6 +175,10 @@ fn row_03_added_and_removed_keys() {
     assert_eq!(reasons(&added), [EVENT_REGENERATED]);
     assert_eq!(added.events[0].message, "regenerated keys: c");
     assert_ready(&added);
+    assert_eq!(
+        added.status.last_generated_time.as_ref().map(|t| t.0),
+        Some(later(1))
+    );
 
     // Removed: the key leaves the Secret, the others stay, nothing is generated.
     let (secret, first, removed) = change(
@@ -233,6 +237,16 @@ fn row_05_non_generating_changes_do_not_regenerate() {
     assert_eq!(desired.metadata.owner_references, None);
     assert_eq!(desired.data, secret.data);
     assert_quiet(&first, &second);
+
+    // The applied Secret no longer has our controller reference; the next
+    // call recognises it by `spec-uid` and finds it up to date.
+    let retain = next_generation(
+        secret_spec("{deletionPolicy: Retain, fields: [{name: password}]}"),
+        &second,
+    );
+    let again = plan(&retain, Some(&desired), later(2), &mut seeded_rng(3));
+    assert!(matches!(again.action, SecretAction::UpToDate));
+    assert!(again.events.is_empty(), "{:?}", again.events);
 
     // secret.labels / secret.annotations.
     let (secret, first, second) = change(
@@ -429,6 +443,21 @@ fn row_10_elapsed_interval_rotates_everything() {
         Some(later(90))
     );
     assert_eq!(due.requeue_after, Some(Duration::from_secs(90 * DAY)));
+
+    // Plain fields rotate too; literals stay.
+    let spec = secret_spec(
+        "{rotation: {interval: 90d}, data: {user: u}, fields: [{name: a}, {name: b, bytes: 16, encoding: hex}]}",
+    );
+    let first = plan(&spec, None, earlier(91), &mut seeded_rng(1));
+    let secret = applied(&first);
+    let spec = with_status(spec, &first);
+    let due = plan(&spec, Some(&secret), now(), &mut seeded_rng(2));
+    let desired = applied(&due);
+    assert_ne!(value(&desired, "a"), value(&secret, "a"));
+    assert_ne!(value(&desired, "b"), value(&secret, "b"));
+    assert_eq!(value(&desired, "user"), b"u");
+    assert_eq!(reasons(&due), [EVENT_ROTATED]);
+    assert_eq!(due.events[0].message, "rotated keys: a, b");
 
     // Missed intervals coalesce into one rotation.
     let spec = secret_spec("{rotation: {interval: 90d}, data: {user: u}, sshKeyPair: {}}");

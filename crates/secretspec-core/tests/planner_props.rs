@@ -86,8 +86,8 @@ fn check_not_logged(name: &str, spec: &SecretSpec) {
     let mut checked = 0;
     for (key, bytes) in secret.data.as_ref().unwrap() {
         let text = String::from_utf8_lossy(&bytes.0);
-        // Multi-line values (PEM) leak line by line; short values could
-        // coincide with a key name by chance.
+        // Multi-line values (PEM) leak line by line. Lines under 8 bytes are
+        // skipped: a short value could coincide with a key name by chance.
         for line in text.lines().map(str::trim).filter(|line| line.len() >= 8) {
             let escaped = format!("{line:?}");
             let escaped = &escaped[1..escaped.len() - 1];
