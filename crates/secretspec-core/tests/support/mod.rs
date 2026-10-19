@@ -7,6 +7,7 @@
 #![allow(clippy::expect_used)]
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use jiff::Timestamp;
 use k8s_openapi::api::core::v1::Secret;
@@ -14,6 +15,7 @@ use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use rand_chacha::ChaCha20Rng;
 use rand_core::{CryptoRngCore, SeedableRng};
 use secretspec_api::v1alpha1::{SecretSpec, SecretSpecSpec};
+use secretspec_core::plan::{Plan, SecretAction};
 
 /// A deterministic cryptographic RNG for reproducible tests.
 pub fn seeded_rng(seed: u64) -> impl CryptoRngCore {
@@ -47,6 +49,69 @@ pub fn secret_spec(yaml: &str) -> SecretSpec {
 /// Never: the literal is a valid timestamp.
 pub fn now() -> Timestamp {
     "2026-10-19T12:00:00Z".parse().expect("timestamp")
+}
+
+/// Seconds in a day.
+pub const DAY: u64 = 86_400;
+
+/// [`now`] plus `days`.
+pub fn later(days: u64) -> Timestamp {
+    now()
+        .checked_add(Duration::from_secs(days * DAY))
+        .expect("in range")
+}
+
+/// [`now`] minus `days`.
+pub fn earlier(days: u64) -> Timestamp {
+    now()
+        .checked_sub(Duration::from_secs(days * DAY))
+        .expect("in range")
+}
+
+/// The Secret `plan` applies.
+///
+/// # Panics
+/// The plan does not apply a Secret.
+pub fn applied(plan: &Plan) -> Secret {
+    match &plan.action {
+        SecretAction::Apply(secret) => (**secret).clone(),
+        other => panic!("expected Apply, got {other:?}"),
+    }
+}
+
+/// The event reasons of `plan`, in order.
+pub fn reasons(plan: &Plan) -> Vec<&'static str> {
+    plan.events.iter().map(|event| event.reason).collect()
+}
+
+/// The value stored under `key`.
+///
+/// # Panics
+/// The Secret has no such key.
+pub fn value<'a>(secret: &'a Secret, key: &str) -> &'a [u8] {
+    &secret.data.as_ref().expect("data")[key].0
+}
+
+/// The annotation `key` of `secret`.
+pub fn annotation<'a>(secret: &'a Secret, key: &str) -> Option<&'a str> {
+    secret
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(|map| map.get(key))
+        .map(String::as_str)
+}
+
+/// The spec after the controller wrote `plan`'s status.
+pub fn with_status(mut spec: SecretSpec, plan: &Plan) -> SecretSpec {
+    spec.status = Some(plan.status.clone());
+    spec
+}
+
+/// `spec` at the next generation, after the controller wrote `plan`'s status.
+pub fn next_generation(mut spec: SecretSpec, plan: &Plan) -> SecretSpec {
+    spec.metadata.generation = spec.metadata.generation.map(|generation| generation + 1);
+    with_status(spec, plan)
 }
 
 /// A string map from pairs.

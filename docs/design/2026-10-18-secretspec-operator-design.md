@@ -405,6 +405,10 @@ Each row MUST be covered by exactly one table-driven unit test, and vice versa.
 | 13 | SecretSpec deleted | `Delete`: Secret garbage-collected. `Retain`: Secret kept. | [owner] |
 | 14 | SecretSpec recreated while a retained Secret exists | Adopted; matching values kept (§6). | [architect] |
 | 15 | A Secret with that name exists and is not ours | `Conflict`; nothing written. | [architect] |
+| 16 | Fingerprint metadata lost (annotation missing, not JSON, or an entry invalid) | Every present value is kept, the fingerprints are re-stamped from the spec, and a Warning `FingerprintsReset` is emitted. Lost metadata never rotates. | [architect] |
+| 17 | `keys.*` renamed in the spec | The value moves to the new key name; nothing is regenerated. | [architect] |
+| 18 | The retained Secret's `type` differs from the spec's `secret.type` (the field is immutable) | `Conflict` telling the user to delete the Secret; nothing written. | [architect] |
+| 19 | The rotation anchor (`generated-at`) is unparseable | The anchor is reset to now, no rotation happens, and a Warning `AnchorReset` is emitted. | [architect] |
 
 There is no `regenerate` annotation and no `forceRegenerate` field. A rotation request committed to git would be replayed forever. To rotate manually, delete the Secret. **[owner]**
 
