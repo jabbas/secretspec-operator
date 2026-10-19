@@ -34,6 +34,12 @@ const SECRET_DELETING_REQUEUE: Duration = Duration::from_secs(5);
 /// Requeue delay after a failed reconcile.
 const ERROR_REQUEUE: Duration = Duration::from_secs(30);
 
+/// Requeue delay after the status write lost an optimistic-concurrency race.
+const STATUS_CONFLICT_REQUEUE: Duration = Duration::from_secs(1);
+
+/// HTTP status of an optimistic-concurrency conflict.
+const HTTP_CONFLICT: u16 = 409;
+
 /// The `action` of every published event.
 const EVENT_ACTION: &str = "Reconcile";
 
@@ -175,8 +181,21 @@ async fn reconcile_inner(
                 &message,
                 Timestamp::now(),
             );
-            if let Err(status_err) = write_status(ctx, spec, namespace, name, &status).await {
-                tracing::warn!(namespace, name, error = %status_err, "writing ApplyFailed status failed");
+            // Optimistic write: on a conflict our copy of the SecretSpec was
+            // stale; the ApplyFailed retry replans from fresh state.
+            match write_status(ctx, spec, namespace, name, &status).await {
+                Ok(StatusWrite::Conflict) => tracing::debug!(
+                    namespace,
+                    name,
+                    "SecretSpec changed; ApplyFailed status not written"
+                ),
+                Ok(StatusWrite::Written | StatusWrite::Unchanged) => {}
+                Err(status_err) => tracing::warn!(
+                    namespace,
+                    name,
+                    error = %status_err,
+                    "writing ApplyFailed status failed"
+                ),
             }
             let events = events_after_apply_failure(&plan.events, &message);
             publish(ctx, &reference, namespace, name, &events).await;
@@ -185,37 +204,75 @@ async fn reconcile_inner(
         }
     }
 
+    // The status write carries the resourceVersion we planned from, so a
+    // stale (cached) SecretSpec can never overwrite a newer status.
+    //
+    // The Secret write (if any) has already happened, so the planned events
+    // describe what happened and are published whatever the status write's
+    // outcome — including a conflict: the retry plans from fresh state, finds
+    // the Secret up to date and plans no generation events, so nothing is
+    // published twice.
+    //
+    // If the status write fails (conflict or error) after values were
+    // (re)generated, the `lastGeneratedTime` / `lastRotationTime` of this
+    // reconcile are lost: the retry sees an up-to-date Secret and keeps the
+    // times of the stored status. They are informational only; the Secret's
+    // annotations, not these fields, drive rotation.
     let written = write_status(ctx, spec, namespace, name, &plan.status).await;
-    // The Secret write (if any) has happened, so its events are true even if
-    // the status write failed.
     publish(ctx, &reference, namespace, name, &plan.events).await;
     log_reconcile(namespace, name, action, &plan.status, started);
-    written?;
+    if written? == StatusWrite::Conflict {
+        tracing::debug!(
+            namespace,
+            name,
+            "SecretSpec changed since it was read; status not written, requeueing"
+        );
+        return Ok(Action::requeue(STATUS_CONFLICT_REQUEUE));
+    }
     Ok(Action::requeue(requeue_after(
         plan.requeue_after,
         ctx.resync,
     )))
 }
 
-/// Writes `desired` to the status subresource unless it already matches.
+/// The outcome of [`write_status`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StatusWrite {
+    /// The status was patched.
+    Written,
+    /// The stored status already matched; nothing was sent.
+    Unchanged,
+    /// The `SecretSpec` changed since it was read (HTTP 409); nothing was
+    /// written.
+    Conflict,
+}
+
+/// Writes `desired` to the status subresource unless it already matches,
+/// conditional on the `SecretSpec`'s `resourceVersion`.
 async fn write_status(
     ctx: &Ctx,
     spec: &SecretSpec,
     namespace: &str,
     name: &str,
     desired: &SecretSpecStatus,
-) -> Result<(), Error> {
+) -> Result<StatusWrite, Error> {
     if !status_patch_needed(spec.status.as_ref(), desired) {
         tracing::debug!(namespace, name, "status unchanged; not patching");
-        return Ok(());
+        return Ok(StatusWrite::Unchanged);
     }
-    let patch = status_merge_patch(desired)?;
+    let patch = status_merge_patch(desired, spec.metadata.resource_version.as_deref())?;
     let specs: Api<SecretSpec> = Api::namespaced(ctx.client.clone(), namespace);
-    specs
+    match specs
         .patch_status(name, &PatchParams::default(), &Patch::Merge(&patch))
         .await
-        .map_err(|err| Error::Kube(format!("patch status: {}", kube_error_summary(&err))))?;
-    Ok(())
+    {
+        Ok(_) => Ok(StatusWrite::Written),
+        Err(kube::Error::Api(status)) if status.code == HTTP_CONFLICT => Ok(StatusWrite::Conflict),
+        Err(err) => Err(Error::Kube(format!(
+            "patch status: {}",
+            kube_error_summary(&err)
+        ))),
+    }
 }
 
 /// Publishes `events` on the `SecretSpec` and counts generations. A failed
@@ -284,13 +341,18 @@ pub fn status_patch_needed(current: Option<&SecretSpecStatus>, desired: &SecretS
     current != Some(desired)
 }
 
-/// The merge patch `{"status": …}` that sets the status to exactly `desired`:
-/// fields absent from `desired` are `null`, so they are removed.
+/// The merge patch `{"metadata": {"resourceVersion": …}, "status": …}` that
+/// sets the status to exactly `desired`: fields absent from `desired` are
+/// `null`, so they are removed. With `resource_version` the API server rejects
+/// the patch with 409 Conflict if the object changed since that version.
 ///
 /// # Errors
 ///
 /// [`Error::Kube`] if the status cannot be serialized (never expected).
-pub fn status_merge_patch(desired: &SecretSpecStatus) -> Result<Value, Error> {
+pub fn status_merge_patch(
+    desired: &SecretSpecStatus,
+    resource_version: Option<&str>,
+) -> Result<Value, Error> {
     let Value::Object(mut fields) = serde_json::to_value(desired)
         .map_err(|_| Error::Kube("status could not be serialized".to_owned()))?
     else {
@@ -300,6 +362,14 @@ pub fn status_merge_patch(desired: &SecretSpecStatus) -> Result<Value, Error> {
         fields.entry(field).or_insert(Value::Null);
     }
     let mut patch = Map::new();
+    if let Some(resource_version) = resource_version {
+        let mut metadata = Map::new();
+        metadata.insert(
+            "resourceVersion".to_owned(),
+            Value::String(resource_version.to_owned()),
+        );
+        patch.insert("metadata".to_owned(), Value::Object(metadata));
+    }
     patch.insert("status".to_owned(), Value::Object(fields));
     Ok(Value::Object(patch))
 }
@@ -326,7 +396,10 @@ fn ready_reason(status: &SecretSpecStatus) -> Option<&str> {
 mod tests {
     #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+    use std::collections::BTreeSet;
+
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::{Condition, Time};
+    use kube::CustomResourceExt;
     use secretspec_api::constants::{EVENT_GENERATED, EVENT_LOW_ENTROPY, REASON_GENERATED};
     use secretspec_api::v1alpha1::SecretKind;
 
@@ -392,22 +465,56 @@ mod tests {
 
     #[test]
     fn status_merge_patch_nulls_absent_fields() {
-        let patch = status_merge_patch(&SecretSpecStatus::default()).unwrap();
+        let patch = status_merge_patch(&SecretSpecStatus::default(), None).unwrap();
         let status = patch["status"].as_object().unwrap();
         assert_eq!(status.len(), STATUS_FIELDS.len());
         assert!(status.values().all(Value::is_null), "{patch}");
+        assert!(patch.get("metadata").is_none(), "{patch}");
+    }
+
+    #[test]
+    fn status_merge_patch_carries_resource_version() {
+        let patch = status_merge_patch(&full_status(), Some("4711")).unwrap();
+        assert_eq!(patch["metadata"]["resourceVersion"], "4711", "{patch}");
+        let top: Vec<&String> = patch.as_object().unwrap().keys().collect();
+        assert_eq!(top, ["metadata", "status"], "{patch}");
+        assert_eq!(
+            patch["metadata"].as_object().unwrap().len(),
+            1,
+            "only resourceVersion: {patch}"
+        );
     }
 
     #[test]
     fn status_merge_patch_covers_every_field() {
-        let patch = status_merge_patch(&full_status()).unwrap();
+        let patch = status_merge_patch(&full_status(), None).unwrap();
         let status = patch["status"].as_object().unwrap();
-        // Every serialized field is one of STATUS_FIELDS: no field can be
-        // missed by the null-filling.
         assert_eq!(status.len(), STATUS_FIELDS.len(), "{patch}");
         assert!(status.values().all(|value| !value.is_null()), "{patch}");
         assert_eq!(status["observedGeneration"], 2);
         assert_eq!(status["nextRotationTime"], "2026-01-03T00:00:00Z");
+    }
+
+    #[test]
+    fn status_fields_match_crd_schema() {
+        // The CRD's status properties are the authority: a new status field
+        // without a STATUS_FIELDS entry would never be cleared by the patch.
+        let crd = SecretSpec::crd();
+        let schema = crd.spec.versions[0]
+            .schema
+            .as_ref()
+            .and_then(|schema| schema.open_api_v3_schema.as_ref())
+            .expect("CRD schema");
+        let status = &schema.properties.as_ref().expect("properties")["status"];
+        let from_crd: BTreeSet<&str> = status
+            .properties
+            .as_ref()
+            .expect("status properties")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let ours: BTreeSet<&str> = STATUS_FIELDS.into_iter().collect();
+        assert_eq!(ours, from_crd);
     }
 
     #[test]
