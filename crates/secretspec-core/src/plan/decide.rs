@@ -137,7 +137,7 @@ impl<'a> Decider<'a> {
             .get(&role)
             .and_then(|key| inv.data.get(key))
             .or_else(|| inv.data.get(spec_key))
-            .map(Vec::as_slice)
+            .map(SecretValue::expose)
     }
 
     /// Rules 2-6.
@@ -181,7 +181,7 @@ impl<'a> Decider<'a> {
         let stored = self
             .inv
             .and_then(|inv| inv.data.get(&field.name))
-            .map(Vec::as_slice);
+            .map(SecretValue::expose);
         let (value, outcome, reset) = match self.verdict(&slot, stored) {
             Verdict::Keep { value, reset } => {
                 (SecretValue::new(value.to_vec()), SlotOutcome::Kept, reset)

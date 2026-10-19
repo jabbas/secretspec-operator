@@ -35,13 +35,18 @@ fn first(spec: &ResolvedSpec, seed: u64) -> Decision {
     decide(spec, None, false, &mut seeded_rng(seed)).expect("generation succeeds")
 }
 
+/// A value as stored in an [`Inventory`].
+fn stored(bytes: &[u8]) -> SecretValue {
+    SecretValue::new(bytes.to_vec())
+}
+
 /// The inventory of the Secret that `decision` for `spec` would have written.
 fn written(spec: &ResolvedSpec, decision: &Decision) -> Inventory {
     Inventory {
         data: decision
             .data
             .iter()
-            .map(|(k, v)| (k.clone(), v.expose().to_vec()))
+            .map(|(k, v)| (k.clone(), stored(v.expose())))
             .collect(),
         fingerprints: Some(
             FingerprintMap::from_annotation(&decision.fingerprints.to_annotation())
@@ -171,8 +176,9 @@ fn rule_1_recorded_key_wins_over_spec_key() {
     let mut inv = written(&s, &d1);
     // Value moved to "old" by an earlier spec; a stale "password" key lingers.
     let password = inv.data.remove("password").unwrap();
-    inv.data.insert("old".to_owned(), password.clone());
-    inv.data.insert("password".to_owned(), b"stale".to_vec());
+    let password = password.expose().to_vec();
+    inv.data.insert("old".to_owned(), stored(&password));
+    inv.data.insert("password".to_owned(), stored(b"stale"));
     inv.keys.0.insert(Role::BasicAuthPassword, "old".to_owned());
     let d2 = again(&s, &inv, 2);
     assert_eq!(value(&d2, "password"), password.as_slice());
@@ -428,7 +434,7 @@ fn rule_7_tampered_public_key_is_rederived() {
     let mut inv = written(&s, &d1);
     inv.data.insert(
         "ssh-publickey".to_owned(),
-        b"ssh-ed25519 AAAA bogus\n".to_vec(),
+        stored(b"ssh-ed25519 AAAA bogus\n"),
     );
     let d2 = again(&s, &inv, 2);
     assert_eq!(d2.outcomes[&Slot::SshKeyPair], SlotOutcome::Rederived);
@@ -442,7 +448,7 @@ fn rule_7_unparseable_private_key_regenerates_pair() {
     for fingerprints_lost in [false, true] {
         let mut inv = written(&s, &d1);
         inv.data
-            .insert("ssh-privatekey".to_owned(), b"not a key".to_vec());
+            .insert("ssh-privatekey".to_owned(), stored(b"not a key"));
         if fingerprints_lost {
             inv.fingerprints = None;
         }
@@ -473,7 +479,7 @@ fn rule_7_private_key_of_wrong_algorithm_regenerates_pair() {
     .unwrap();
     inv.data.insert(
         "ssh-privatekey".to_owned(),
-        foreign.private_key.expose().to_vec(),
+        stored(foreign.private_key.expose()),
     );
     let d2 = again(&s, &inv, 2);
     assert_eq!(d2.outcomes[&Slot::SshKeyPair], SlotOutcome::Regenerated);
@@ -581,7 +587,7 @@ fn rule_8_lost_htpasswd_fingerprint_with_bad_line_rederives() {
         &mut seeded_rng(5),
     )
     .unwrap();
-    inv.data.insert("auth".to_owned(), other.expose().to_vec());
+    inv.data.insert("auth".to_owned(), stored(other.expose()));
     let d2 = again(&s, &inv, 2);
     assert_eq!(d2.outcomes[&Slot::BasicAuthPassword], SlotOutcome::Kept);
     assert_eq!(

@@ -13,6 +13,7 @@ use secretspec_api::constants::{
 
 use crate::fingerprint::{FingerprintMap, ParsedAnnotation};
 use crate::plan::keys::KeyMap;
+use crate::value::SecretValue;
 
 /// The Secret type assumed when the field is empty.
 const DEFAULT_SECRET_TYPE: &str = "Opaque";
@@ -28,11 +29,12 @@ pub enum Anchor {
     At(Timestamp),
 }
 
-/// What the planner knows about the Secret that currently exists.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// What the planner knows about the Secret that currently exists. `Debug`
+/// shows key names only: the values are [`SecretValue`]s.
+#[derive(Debug)]
 pub struct Inventory {
     /// Secret data with empty values removed (an empty value counts as missing).
-    pub data: BTreeMap<String, Vec<u8>>,
+    pub data: BTreeMap<String, SecretValue>,
     /// The fingerprints annotation; `None` when it is absent or not a JSON object.
     pub fingerprints: Option<ParsedAnnotation>,
     /// The role -> key map from the keys annotation (tolerant).
@@ -52,7 +54,7 @@ pub fn inventory(secret: &Secret) -> Inventory {
         .iter()
         .flatten()
         .filter(|(_, value)| !value.0.is_empty())
-        .map(|(key, value)| (key.clone(), value.0.clone()))
+        .map(|(key, value)| (key.clone(), SecretValue::new(value.0.clone())))
         .collect();
     let annotations = secret.metadata.annotations.as_ref();
     let annotation = |name: &str| {
@@ -120,7 +122,26 @@ mod tests {
     fn drops_empty_values() {
         let inv = inventory(&secret(&[], &[("a", b"x"), ("b", b"")]));
         assert_eq!(inv.data.len(), 1);
-        assert_eq!(inv.data["a"], b"x");
+        assert_eq!(inv.data["a"].expose(), b"x");
+    }
+
+    #[test]
+    fn inventory_debug_never_contains_values() {
+        let inv = inventory(&secret(
+            &[],
+            &[("password", b"hunter2-very-secret"), ("token", b"\x01\x02")],
+        ));
+        let debug = format!("{inv:?}");
+        assert!(!debug.contains("hunter2-very-secret"), "{debug}");
+        assert!(
+            !debug.contains("104, 117, 110"),
+            "byte list leaked: {debug}"
+        );
+        assert!(
+            debug.contains("password") && debug.contains("token"),
+            "{debug}"
+        );
+        assert!(debug.contains("<redacted>"), "{debug}");
     }
 
     #[test]
