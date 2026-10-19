@@ -5,3 +5,5 @@
 
 pub mod config;
 pub mod logging;
+pub mod outcome;
+pub mod view;

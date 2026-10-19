@@ -2469,6 +2469,12 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
+ "jiff",
+ "k8s-openapi",
+ "kube",
+ "secretspec-api",
+ "secretspec-core",
+ "serde_json",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
