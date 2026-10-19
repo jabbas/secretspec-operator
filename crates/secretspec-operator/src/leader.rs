@@ -11,7 +11,8 @@
 //!   clock (`update` with the observed `resourceVersion`). A live lease is
 //!   never stolen; a lost race is a `409 Conflict` and we keep standing by.
 //! - **Renew** every [`RENEW_PERIOD`] with `update` and the `resourceVersion`
-//!   of our last write. If no renewal succeeds within [`RENEW_DEADLINE`], or
+//!   of our last write. If no renewal succeeds within [`RENEW_DEADLINE`]
+//!   (counted from when the last successful request was *sent*), or
 //!   the Lease names another holder, leadership is lost: the work is dropped
 //!   and an error is returned (the process exits non-zero and restarts).
 //! - **Release** (holder cleared) when the work finishes, so a successor can
@@ -43,6 +44,8 @@ pub const RENEW_DEADLINE: Duration = Duration::from_secs(10);
 pub const RETRY_PERIOD: Duration = Duration::from_secs(5);
 /// Pause before retrying a failed renewal.
 const RENEW_RETRY: Duration = Duration::from_secs(1);
+/// Upper bound of the best-effort release on shutdown.
+const RELEASE_TIMEOUT: Duration = Duration::from_secs(5);
 // The leader must give up before anyone else may take over.
 const _: () = assert!(
     RENEW_PERIOD.as_secs() < RENEW_DEADLINE.as_secs()
@@ -73,11 +76,11 @@ where
     F: Future<Output = anyhow::Result<()>>,
 {
     let api: Api<Lease> = Api::namespaced(client, lease_ns);
-    let lease = acquire(&api, lease_name, holder).await;
+    let (lease, tenure) = acquire(&api, lease_name, holder).await;
     tracing::info!(lease = lease_name, holder, "acquired leadership");
 
     let work = pin!(work);
-    let keep = pin!(keep(&api, lease_name, holder, lease));
+    let keep = pin!(keep(&api, lease_name, holder, lease, tenure));
     match futures::future::select(work, keep).await {
         futures::future::Either::Left((result, _)) => {
             release(&api, lease_name, holder).await;
@@ -90,13 +93,29 @@ where
     }
 }
 
-/// Stands by until the Lease is acquired; returns the written Lease.
-async fn acquire(api: &Api<Lease>, name: &str, holder: &str) -> Lease {
+/// Stands by until the Lease is acquired; returns the written Lease and the
+/// tenure, which starts when the successful attempt was sent.
+///
+/// Every attempt is bounded by [`RENEW_DEADLINE`]; a timeout counts as a
+/// failed attempt (if the write did land, the next attempt finds the Lease
+/// already ours and takes it again).
+async fn acquire(api: &Api<Lease>, name: &str, holder: &str) -> (Lease, Tenure) {
     let mut observed = Observed::default();
     let mut last_holder: Option<String> = None;
     loop {
-        match try_acquire(api, name, holder, &mut observed).await {
-            Ok(Attempt::Acquired(lease)) => return *lease,
+        let sent = Instant::now();
+        let attempt = tokio::time::timeout(
+            RENEW_DEADLINE,
+            try_acquire(api, name, holder, &mut observed),
+        )
+        .await;
+        let Ok(attempt) = attempt else {
+            tracing::warn!(lease = name, timeout = ?RENEW_DEADLINE, "lease request timed out");
+            tokio::time::sleep(RETRY_PERIOD).await;
+            continue;
+        };
+        match attempt {
+            Ok(Attempt::Acquired(lease)) => return (*lease, Tenure::new(sent)),
             Ok(Attempt::HeldBy(other)) => {
                 if last_holder.as_deref() != Some(other.as_str()) {
                     tracing::info!(lease = name, leader = %other, "standing by");
@@ -163,12 +182,22 @@ fn conflict_as_race(result: Result<Lease, kube::Error>) -> Result<Attempt, kube:
 }
 
 /// Renews the Lease until leadership is lost; returns why.
-async fn keep(api: &Api<Lease>, name: &str, holder: &str, mut lease: Lease) -> anyhow::Error {
-    let mut last_renew = Instant::now();
-    let mut pause = RENEW_PERIOD;
+///
+/// Each renewal is timed from when its request was sent, never from when the
+/// response arrived, and is cut off at the tenure's deadline: a slow API
+/// server cannot stretch leadership past what the other candidates assume.
+async fn keep(
+    api: &Api<Lease>,
+    name: &str,
+    holder: &str,
+    mut lease: Lease,
+    mut tenure: Tenure,
+) -> anyhow::Error {
+    let mut next = tenure.last_renew + RENEW_PERIOD;
     loop {
-        tokio::time::sleep(pause).await;
-        let Some(remaining) = RENEW_DEADLINE.checked_sub(last_renew.elapsed()) else {
+        tokio::time::sleep(next.saturating_duration_since(Instant::now())).await;
+        let sent = Instant::now();
+        let Some(remaining) = tenure.remaining(sent) else {
             return anyhow::anyhow!("lease {name} not renewed within {RENEW_DEADLINE:?}");
         };
         match tokio::time::timeout(remaining, renew(api, name, holder, &lease)).await {
@@ -177,15 +206,15 @@ async fn keep(api: &Api<Lease>, name: &str, holder: &str, mut lease: Lease) -> a
             }
             Ok(Ok(Renewal::Renewed(renewed))) => {
                 lease = *renewed;
-                last_renew = Instant::now();
-                pause = RENEW_PERIOD;
+                tenure.renewed(sent);
+                next = sent + RENEW_PERIOD;
             }
             Ok(Ok(Renewal::Lost(other))) => {
                 return anyhow::anyhow!("lease {name} is now held by {other:?}");
             }
             Ok(Err(err)) => {
                 tracing::warn!(lease = name, error = %kube_error_summary(&err), "lease renewal failed; retrying");
-                pause = RENEW_RETRY;
+                next = Instant::now() + RENEW_RETRY;
             }
         }
     }
@@ -228,9 +257,10 @@ async fn renew(
 }
 
 /// Clears the holder if it is still us, so a successor need not wait for
-/// expiry. Best effort: failures are logged.
+/// expiry. Best effort, bounded by [`RELEASE_TIMEOUT`]: failures and
+/// timeouts are logged and shutdown continues.
 async fn release(api: &Api<Lease>, name: &str, holder: &str) {
-    let result = async {
+    let attempt = async {
         let current = api.get(name).await?;
         if holder_of(current.spec.as_ref()) != Some(holder) {
             return Ok(());
@@ -242,13 +272,51 @@ async fn release(api: &Api<Lease>, name: &str, holder: &str) {
         api.replace(name, &PostParams::default(), &lease)
             .await
             .map(drop)
-    }
-    .await;
-    match result {
-        Ok(()) => tracing::info!(lease = name, holder, "released leadership"),
-        Err(err) => {
+    };
+    match tokio::time::timeout(RELEASE_TIMEOUT, attempt).await {
+        Ok(Ok(())) => tracing::info!(lease = name, holder, "released leadership"),
+        Ok(Err(err)) => {
             tracing::warn!(lease = name, error = %kube_error_summary(&err), "releasing the lease failed");
         }
+        Err(_) => {
+            tracing::warn!(lease = name, timeout = ?RELEASE_TIMEOUT, "releasing the lease timed out");
+        }
+    }
+}
+
+/// Leadership bookkeeping on the local clock.
+///
+/// `last_renew` is when the request of the last successful acquisition or
+/// renewal was *sent*: the API server may have recorded the write at any
+/// point after that, so dating it from the response would let a slow
+/// response extend leadership beyond `request sent + RENEW_DEADLINE`.
+#[derive(Debug, Clone, Copy)]
+struct Tenure {
+    last_renew: Instant,
+}
+
+impl Tenure {
+    /// A tenure won by a request sent at `sent`.
+    fn new(sent: Instant) -> Self {
+        Self { last_renew: sent }
+    }
+
+    /// Records a successful renewal whose request was sent at `sent`.
+    fn renewed(&mut self, sent: Instant) {
+        self.last_renew = self.last_renew.max(sent);
+    }
+
+    /// The instant by which the next renewal must have succeeded.
+    fn deadline(&self) -> Instant {
+        self.last_renew + RENEW_DEADLINE
+    }
+
+    /// How long a renewal sent at `now` may take; `None` once the deadline
+    /// has passed (leadership is lost).
+    fn remaining(&self, now: Instant) -> Option<Duration> {
+        self.deadline()
+            .checked_duration_since(now)
+            .filter(|left| !left.is_zero())
     }
 }
 
@@ -430,6 +498,51 @@ mod tests {
             observed.unchanged_for(Some("2"), later + Duration::from_secs(3)),
             Duration::from_secs(3)
         );
+    }
+
+    #[test]
+    fn tenure_starts_when_the_acquiring_request_was_sent() {
+        let sent = Instant::now();
+        // The acquisition took 8 s to come back: only 2 s of tenure remain.
+        let tenure = Tenure::new(sent);
+        assert_eq!(tenure.deadline(), sent + RENEW_DEADLINE);
+        assert_eq!(
+            tenure.remaining(sent + Duration::from_secs(8)),
+            Some(Duration::from_secs(2))
+        );
+        assert_eq!(tenure.remaining(sent + RENEW_DEADLINE), None);
+        assert_eq!(tenure.remaining(sent + Duration::from_secs(11)), None);
+    }
+
+    #[test]
+    fn slow_renewal_response_does_not_extend_leadership() {
+        let start = Instant::now();
+        let mut tenure = Tenure::new(start);
+        // Renewal sent at +5 s, response only at +9.5 s.
+        let sent = start + RENEW_PERIOD;
+        let budget = tenure.remaining(sent).unwrap();
+        assert_eq!(budget, Duration::from_secs(5));
+        tenure.renewed(sent);
+        // Leadership ends at send time + deadline, not response time + deadline.
+        assert_eq!(tenure.deadline(), sent + RENEW_DEADLINE);
+        assert_eq!(tenure.remaining(sent + RENEW_DEADLINE), None);
+        assert!(
+            tenure
+                .remaining(start + Duration::from_millis(9_500))
+                .is_some()
+        );
+        // Every renewal is cut off at the deadline, so a response can never
+        // arrive after the point the other candidates may take over.
+        assert!(sent + budget <= start + RENEW_DEADLINE);
+        assert!(tenure.deadline() < sent + LEASE_DURATION);
+    }
+
+    #[test]
+    fn tenure_never_moves_backwards() {
+        let start = Instant::now();
+        let mut tenure = Tenure::new(start + Duration::from_secs(5));
+        tenure.renewed(start);
+        assert_eq!(tenure.last_renew, start + Duration::from_secs(5));
     }
 
     #[test]
