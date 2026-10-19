@@ -458,7 +458,7 @@ The code is a Cargo workspace, edition 2024.
 | HTTP (`/metrics`, `/healthz`, `/readyz`) | `axum` |
 | Metrics | `prometheus-client` |
 | Crypto | RustCrypto: `rand` (OS RNG), `ssh-key`, `sha2`; plus `bcrypt` |
-| Leader election | A maintained Lease-based crate, chosen by the builder |
+| Leader election | Lease-based (`coordination.k8s.io/v1`). Builder's choice: a small in-house module, because the maintained crates for kube 4 write the Lease with `patch`, which §9 does not grant |
 
 ### 8.3 Code rules
 
@@ -738,15 +738,25 @@ There is no migration guide in v0.1.
 
 ## 14. Observability **[architect]**
 
-Metric names are indicative; the builder may refine them.
+Final metric names, served on `/metrics` in the OpenMetrics text format:
 
 | Metric | Type | Labels |
 |---|---|---|
-| `secretspec_reconcile_total` | counter | `result` |
+| `secretspec_reconcile_total` | counter | `result` (`ok`, `error`) |
 | `secretspec_reconcile_duration_seconds` | histogram | — |
-| `secretspec_generations_total` | counter | `kind`, `reason` |
-| `secretspec_ready` | gauge | `namespace`, `name` |
-| `secretspec_next_rotation_timestamp_seconds` | gauge | `namespace`, `name` |
+| `secretspec_generations_total` | counter | `reason` (`Generated`, `Regenerated`, `Rotated`) |
+| `secretspec_secretspecs` | gauge | `ready` (`true`, `false`, `unknown`: the `Ready` condition status) |
+| `secretspec_next_rotation_timestamp_seconds` | gauge | `namespace`, `name` (only SecretSpecs with `status.nextRotationTime`) |
+
+The two gauges are computed at scrape time from the controller's `SecretSpec`
+cache, so a deleted `SecretSpec` disappears from them. Readiness is a count by
+state rather than a per-object series, to keep cardinality independent of the
+number of SecretSpecs; `kubectl get secretspecs` shows per-object readiness.
+
+`/healthz` returns 200 while the process runs. `/readyz` returns 200 once one
+API discovery call has succeeded and either the controllers are started
+(leading, or leader election disabled) or the instance is standing by as a
+non-leader; otherwise 503.
 
 Logs are structured JSON. They include namespace, name and reason. They MUST NEVER include values.
 

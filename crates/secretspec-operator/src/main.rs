@@ -6,7 +6,8 @@ use clap::Parser;
 use secretspec_operator::config::Config;
 use secretspec_operator::logging::init_logging;
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let config = Config::parse();
     config.validate()?;
     init_logging(&config.log_level, config.log_format)?;
@@ -15,5 +16,8 @@ fn main() -> anyhow::Result<()> {
         ?config,
         "secretspec-operator starting"
     );
-    Ok(())
+    let client = kube::Client::try_default()
+        .await
+        .map_err(|e| anyhow::anyhow!("cannot build the Kubernetes client: {e}"))?;
+    secretspec_operator::run(config, client, secretspec_operator::shutdown_signal()).await
 }

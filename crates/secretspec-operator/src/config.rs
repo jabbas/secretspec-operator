@@ -115,6 +115,42 @@ impl Config {
         namespaces.dedup();
         namespaces
     }
+
+    /// This instance's identity: the lease holder and the event reporter
+    /// instance. `POD_NAME` when set and non-empty, else the hostname.
+    #[must_use]
+    pub fn identity(&self) -> Option<String> {
+        identity_from(self.pod_name.as_deref(), hostname)
+    }
+}
+
+/// `pod_name` trimmed when non-empty, else what `hostname` returns.
+fn identity_from(
+    pod_name: Option<&str>,
+    hostname: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    pod_name
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .or_else(hostname)
+}
+
+/// The hostname from `HOSTNAME`, `/proc/sys/kernel/hostname` or
+/// `/etc/hostname`, whichever first yields a non-empty value.
+fn hostname() -> Option<String> {
+    let non_empty = |s: String| {
+        let s = s.trim().to_owned();
+        (!s.is_empty()).then_some(s)
+    };
+    std::env::var("HOSTNAME")
+        .ok()
+        .and_then(non_empty)
+        .or_else(|| {
+            ["/proc/sys/kernel/hostname", "/etc/hostname"]
+                .into_iter()
+                .find_map(|path| std::fs::read_to_string(path).ok().and_then(non_empty))
+        })
 }
 
 /// Parse a duration of the form `<n>s`, `<n>m` or `<n>h` with `n >= 1`.
@@ -254,6 +290,17 @@ mod tests {
         ] {
             assert!(parse_duration(bad).is_err(), "{bad:?} should be rejected");
         }
+    }
+
+    #[test]
+    fn identity_prefers_pod_name_and_falls_back_to_hostname() {
+        let host = || Some("host-1".to_owned());
+        assert_eq!(identity_from(Some("pod-a"), host), Some("pod-a".into()));
+        assert_eq!(identity_from(Some(" pod-a "), host), Some("pod-a".into()));
+        assert_eq!(identity_from(Some(""), host), Some("host-1".into()));
+        assert_eq!(identity_from(Some("  "), host), Some("host-1".into()));
+        assert_eq!(identity_from(None, host), Some("host-1".into()));
+        assert_eq!(identity_from(None, || None), None);
     }
 
     #[test]
