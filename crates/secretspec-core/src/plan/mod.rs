@@ -190,7 +190,13 @@ pub fn plan<R: CryptoRngCore + ?Sized>(
     }
 
     let anchor = inv.as_ref().map_or(Anchor::Absent, |inv| inv.generated_at);
-    let schedule = rotation(resolved.rotation, &anchor, now);
+    // Rotation is scheduled from the moment the operator first observes it:
+    // without a recorded next rotation time, a past-due anchor does not rotate.
+    let scheduled = spec
+        .status
+        .as_ref()
+        .is_some_and(|status| status.next_rotation_time.is_some());
+    let schedule = rotation(resolved.rotation, &anchor, scheduled, now);
     let decision = match decide(&resolved, inv.as_ref(), schedule.due, rng) {
         Ok(decision) => decision,
         Err(error) => return halted(spec, kind, invalid_spec(error.to_string()), now),

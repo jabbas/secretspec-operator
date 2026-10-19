@@ -407,6 +407,14 @@ fn row_10_elapsed_interval_rotates_everything() {
         Some(earlier(91).to_string().as_str())
     );
     let spec = with_status(spec, &first);
+    // Rotation is due only once it is scheduled (row 11).
+    assert_eq!(
+        spec.status
+            .as_ref()
+            .and_then(|status| status.next_rotation_time.as_ref())
+            .map(|t| t.0),
+        Some(earlier(1))
+    );
 
     let due = plan(&spec, Some(&secret), now(), &mut seeded_rng(2));
     let desired = applied(&due);
@@ -519,6 +527,89 @@ fn row_11_enabling_rotation_does_not_rotate() {
         third.status.next_rotation_time.as_ref().map(|t| t.0),
         Some(later(90))
     );
+
+    enabled_with_a_past_due_anchor();
+    lost_status_with_a_past_due_anchor();
+}
+
+/// Asserts that `p` started the rotation clock at [`now`] without rotating:
+/// values kept, no events, `generated-at` = now, next = now + 90d.
+fn assert_clock_started(p: &Plan, secret: &Secret) {
+    let desired = applied(p);
+    assert_eq!(desired.data, secret.data, "no rotation");
+    assert!(!reasons(p).contains(&EVENT_ROTATED), "{:?}", p.events);
+    assert_ready(p);
+    assert_eq!(
+        annotation(&desired, ANNOTATION_GENERATED_AT),
+        Some(now().to_string().as_str())
+    );
+    assert_eq!(
+        p.status.next_rotation_time.as_ref().map(|t| t.0),
+        Some(later(90))
+    );
+    assert_eq!(p.status.last_rotation_time, None);
+    assert_eq!(p.requeue_after, Some(Duration::from_secs(90 * DAY)));
+}
+
+/// Row 11: generated two years ago without rotation; enabling a 90-day
+/// rotation starts the clock now instead of rotating.
+fn enabled_with_a_past_due_anchor() {
+    let spec = secret_spec("fields: [{name: a}]");
+    let first = plan(&spec, None, earlier(730), &mut seeded_rng(1));
+    let secret = applied(&first);
+    assert_eq!(first.status.next_rotation_time, None);
+    let spec = next_generation(
+        secret_spec("{rotation: {interval: 90d}, fields: [{name: a}]}"),
+        &first,
+    );
+
+    let second = plan(&spec, Some(&secret), now(), &mut seeded_rng(2));
+    assert_clock_started(&second, &secret);
+    assert!(second.events.is_empty(), "{:?}", second.events);
+    assert_eq!(
+        second.status.last_generated_time, first.status.last_generated_time,
+        "nothing was generated"
+    );
+
+    // Once scheduled, the next plan inside the interval stays quiet.
+    let secret = applied(&second);
+    let spec = with_status(spec, &second);
+    let third = plan(&spec, Some(&secret), later(89), &mut seeded_rng(3));
+    assert!(third.events.is_empty(), "{:?}", third.events);
+    assert!(matches!(third.action, SecretAction::UpToDate));
+}
+
+/// Row 11: with the status lost, nothing is scheduled, so a past-due anchor
+/// starts the clock now instead of rotating.
+fn lost_status_with_a_past_due_anchor() {
+    let spec = secret_spec("{rotation: {interval: 90d}, fields: [{name: a}]}");
+    let first = plan(&spec, None, earlier(200), &mut seeded_rng(1));
+    let secret = applied(&first);
+    // The status was lost (for example a restore without status).
+    let second = plan(&spec, Some(&secret), now(), &mut seeded_rng(2));
+    assert_clock_started(&second, &secret);
+}
+
+/// Rows 12 then 11: rotation removed, then re-enabled long after the old
+/// anchor fell due; the re-enabled schedule starts now.
+fn re_enabled_rotation_does_not_rotate() {
+    let rotating = "{rotation: {interval: 90d}, fields: [{name: a}]}";
+    let spec = secret_spec(rotating);
+    let first = plan(&spec, None, earlier(400), &mut seeded_rng(1));
+    let secret = applied(&first);
+    assert!(first.status.next_rotation_time.is_some());
+
+    // Rotation removed: the schedule disappears from the status.
+    let spec = next_generation(secret_spec("fields: [{name: a}]"), &first);
+    let removed = plan(&spec, Some(&secret), earlier(300), &mut seeded_rng(2));
+    assert_eq!(removed.status.next_rotation_time, None);
+    let secret = applied(&removed);
+
+    // Re-enabled long after the old anchor fell due.
+    let spec = next_generation(secret_spec(rotating), &removed);
+    let again = plan(&spec, Some(&secret), now(), &mut seeded_rng(3));
+    assert_clock_started(&again, &secret);
+    assert!(again.events.is_empty(), "{:?}", again.events);
 }
 
 #[test]
@@ -542,6 +633,8 @@ fn row_12_removed_rotation_keeps_values() {
         annotation(&desired, ANNOTATION_GENERATED_AT),
         annotation(&secret, ANNOTATION_GENERATED_AT)
     );
+
+    re_enabled_rotation_does_not_rotate();
 }
 
 #[test]
@@ -614,6 +707,29 @@ fn row_14_recreated_secretspec_adopts_the_retained_secret() {
     assert_eq!(value(&desired, "a"), value(&secret, "a"));
     assert_eq!(value(&desired, "b").len(), 40);
     assert_eq!(reasons(&adopted), [EVENT_REGENERATED, EVENT_ADOPTED]);
+
+    adopting_with_a_past_due_anchor_does_not_rotate();
+}
+
+/// Row 14: a new `SecretSpec` with rotation adopts a retained Secret whose
+/// anchor is long past due; nothing is scheduled yet, so it does not rotate.
+fn adopting_with_a_past_due_anchor_does_not_rotate() {
+    let retained = "{deletionPolicy: Retain, rotation: {interval: 90d}, fields: [{name: a}]}";
+    let old = plan(
+        &secret_spec(retained),
+        None,
+        earlier(730),
+        &mut seeded_rng(1),
+    );
+    let secret = applied(&old);
+
+    // A new SecretSpec has no status, so nothing is scheduled yet.
+    let mut recreated = secret_spec(retained);
+    recreated.metadata.uid = Some("new-uid".to_owned());
+    let adopted = plan(&recreated, Some(&secret), now(), &mut seeded_rng(2));
+    assert_clock_started(&adopted, &secret);
+    assert_eq!(reasons(&adopted), [EVENT_ADOPTED]);
+    assert_eq!(adopted.status.last_generated_time, None);
 }
 
 #[test]

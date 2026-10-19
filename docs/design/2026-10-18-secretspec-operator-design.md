@@ -354,6 +354,8 @@ The policy and its semantics are **[owner]**. The mechanics are **[architect]**.
   4. updates `spec-uid`;
   5. emits the `Adopted` Event.
 
+  Adoption never rotates on its own: the new SecretSpec has no `nextRotationTime` yet, so a past-due `generated-at` restarts the rotation clock at now (§7.2 row 11).
+
   This is how a credential survives uninstall and reinstall under `Retain`.
 - **Pending GC:** if the Secret still has an ownerReference to a different SecretSpec UID that has been deleted, the operator MUST requeue and wait. It MUST NOT adopt yet.
 - **Security note (for the docs):** adoption keys off labels. Anyone who can create Secrets in the namespace could craft one to be adopted. They already have write access to Secrets there, so this is not a privilege escalation.
@@ -400,10 +402,10 @@ Each row MUST be covered by exactly one table-driven unit test, and vice versa.
 | 8 | A key deleted from the Secret (or emptied) | That key regenerated. | [architect] |
 | 9 | Secret deleted | Full regeneration, which is the **manual rotation** mechanism. Literals unchanged. | [owner] |
 | 10 | `rotation.interval` elapsed since `generated-at` | All generated keys regenerated (including the SSH key pair); anchor = now. Missed intervals coalesce into one rotation. | [owner: feature; architect: mechanics] |
-| 11 | Rotation enabled on an existing Secret | No immediate rotation. The anchor is the existing `generated-at`, or now if it is absent. | [architect] |
+| 11 | Rotation enabled on an existing Secret, or no rotation scheduled yet (`status.nextRotationTime` absent: rotation newly enabled or re-enabled, status lost, or a new SecretSpec adopting a retained Secret) | No immediate rotation: rotation is scheduled from the moment the operator first observes it. The anchor is the existing `generated-at` while it is not yet due; if it is absent or already past due, the anchor (`generated-at`) becomes now and `nextRotationTime` = now + interval, without a `Rotated` Event. Row 10 applies only once `nextRotationTime` is recorded. After status loss a rotation may therefore be delayed by up to one interval. | [architect] |
 | 12 | `rotation` removed | Schedule disabled; values kept. | [architect] |
 | 13 | SecretSpec deleted | `Delete`: Secret garbage-collected. `Retain`: Secret kept. | [owner] |
-| 14 | SecretSpec recreated while a retained Secret exists | Adopted; matching values kept (§6). | [architect] |
+| 14 | SecretSpec recreated while a retained Secret exists | Adopted; matching values kept; no immediate rotation (§6, row 11). | [architect] |
 | 15 | A Secret with that name exists and is not ours | `Conflict`; nothing written. | [architect] |
 | 16 | Fingerprint metadata lost (annotation missing, not JSON, or an entry invalid) | Every present value is kept, the fingerprints are re-stamped from the spec, and a Warning `FingerprintsReset` is emitted. Lost metadata never rotates. | [architect] |
 | 17 | `keys.*` renamed in the spec | The value moves to the new key name; nothing is regenerated. | [architect] |
