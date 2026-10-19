@@ -422,7 +422,7 @@ There is no `regenerate` annotation and no `forceRegenerate` field. A rotation r
 | Type | Reasons |
 |---|---|
 | Normal | `Generated`, `Regenerated` (lists key names, never values), `Rotated`, `Adopted` |
-| Warning | `Conflict`, `InvalidSpec`, `LowEntropy`, `ApplyFailed`, `FingerprintsReset`, `AnchorReset` |
+| Warning | `Conflict`, `InvalidSpec`, `LowEntropy`, `ApplyFailed`, `FingerprintsReset`, `AnchorReset`, `PasswordTruncated` (a (re)generated `basicAuth` password longer than 72 bytes: the htpasswd hash covers only the first 72) |
 
 ## 8. Architecture **[architect]**
 

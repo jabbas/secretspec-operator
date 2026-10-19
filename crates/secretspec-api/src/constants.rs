@@ -50,6 +50,9 @@ pub const EVENT_FINGERPRINTS_RESET: &str = "FingerprintsReset";
 pub const EVENT_ANCHOR_RESET: &str = "AnchorReset";
 /// Event reason: applying the Secret failed.
 pub const EVENT_APPLY_FAILED: &str = "ApplyFailed";
+/// Event reason: a generated `basicAuth` password is longer than the 72
+/// bytes that bcrypt hashes, so the htpasswd line covers only its prefix.
+pub const EVENT_PASSWORD_TRUNCATED: &str = "PasswordTruncated";
 
 /// Name of the status condition reporting readiness.
 pub const CONDITION_READY: &str = "Ready";

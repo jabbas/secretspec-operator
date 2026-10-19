@@ -1,0 +1,488 @@
+// SPDX-License-Identifier: Apache-2.0
+
+//! `plan()` details beyond the behaviour table: status, events, comparison.
+
+// Tests report through panics.
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
+mod support;
+
+use std::time::Duration;
+
+use jiff::Timestamp;
+use k8s_openapi::ByteString;
+use k8s_openapi::api::core::v1::Secret;
+use k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference;
+use secretspec_api::constants::{
+    ANNOTATION_FINGERPRINTS, ANNOTATION_GENERATED_AT, ANNOTATION_KEYS, ANNOTATION_SPEC_UID,
+    EVENT_ADOPTED, EVENT_ANCHOR_RESET, EVENT_FINGERPRINTS_RESET, EVENT_INVALID_SPEC,
+    EVENT_LOW_ENTROPY, EVENT_PASSWORD_TRUNCATED, EVENT_REGENERATED, EVENT_ROTATED,
+    LABEL_MANAGED_BY, LABEL_SPEC_NAME, MANAGED_BY_VALUE, REASON_CONFLICT, REASON_GENERATED,
+    REASON_INVALID_SPEC, REASON_WAITING_FOR_GC,
+};
+use secretspec_api::v1alpha1::{SecretKind, SecretSpec};
+use secretspec_core::plan::{Plan, SecretAction, plan};
+use support::{SPEC_NAME, SPEC_UID, now, secret_spec, seeded_rng};
+
+const DAY: u64 = 86_400;
+
+fn applied(plan: &Plan) -> Secret {
+    match &plan.action {
+        SecretAction::Apply(secret) => (**secret).clone(),
+        other => panic!("expected Apply, got {other:?}"),
+    }
+}
+
+fn later(days: u64) -> Timestamp {
+    now()
+        .checked_add(Duration::from_secs(days * DAY))
+        .expect("in range")
+}
+
+fn reasons(plan: &Plan) -> Vec<&'static str> {
+    plan.events.iter().map(|event| event.reason).collect()
+}
+
+fn value<'a>(secret: &'a Secret, key: &str) -> &'a [u8] {
+    &secret.data.as_ref().expect("data")[key].0
+}
+
+fn annotation<'a>(secret: &'a Secret, key: &str) -> Option<&'a str> {
+    secret
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(|map| map.get(key))
+        .map(String::as_str)
+}
+
+/// The spec after the controller wrote `plan`'s status.
+fn with_status(mut spec: SecretSpec, plan: &Plan) -> SecretSpec {
+    spec.status = Some(plan.status.clone());
+    spec
+}
+
+const FIXTURES: [&str; 4] = [
+    "{data: {username: app}, fields: [{name: password}, {name: token, bytes: 16, encoding: base64}]}",
+    "sshKeyPair: {}",
+    "{secret: {type: kubernetes.io/basic-auth}, basicAuth: {username: admin}}",
+    "{rotation: {interval: 90d}, deletionPolicy: Retain, fields: [{name: pin, length: 6, charset: hex}]}",
+];
+
+#[test]
+fn feeding_the_desired_secret_back_is_up_to_date() {
+    for yaml in FIXTURES {
+        let spec = secret_spec(yaml);
+        let first = plan(&spec, None, now(), &mut seeded_rng(1));
+        let secret = applied(&first);
+        let spec = with_status(spec, &first);
+        let second = plan(&spec, Some(&secret), later(1), &mut seeded_rng(2));
+        assert!(matches!(second.action, SecretAction::UpToDate), "{yaml}");
+        assert!(second.events.is_empty(), "{yaml}: {:?}", second.events);
+        assert_eq!(
+            second.status.conditions, first.status.conditions,
+            "{yaml}: condition unchanged"
+        );
+        assert_eq!(
+            second.status.last_generated_time,
+            first.status.last_generated_time
+        );
+        assert_eq!(
+            second.status.next_rotation_time,
+            first.status.next_rotation_time
+        );
+    }
+}
+
+#[test]
+fn foreign_metadata_and_owners_do_not_count() {
+    let spec = secret_spec("fields: [{name: password}]");
+    let first = plan(&spec, None, now(), &mut seeded_rng(1));
+    let mut secret = applied(&first);
+    secret
+        .metadata
+        .labels
+        .as_mut()
+        .unwrap()
+        .insert("other".to_owned(), "x".to_owned());
+    secret
+        .metadata
+        .annotations
+        .as_mut()
+        .unwrap()
+        .insert("kubectl/last".to_owned(), "x".to_owned());
+    secret
+        .metadata
+        .owner_references
+        .as_mut()
+        .unwrap()
+        .push(OwnerReference {
+            api_version: "v1".to_owned(),
+            kind: "ConfigMap".to_owned(),
+            name: "cm".to_owned(),
+            uid: "other".to_owned(),
+            controller: None,
+            block_owner_deletion: None,
+        });
+    secret.metadata.resource_version = Some("42".to_owned());
+    let second = plan(&spec, Some(&secret), now(), &mut seeded_rng(2));
+    assert!(matches!(second.action, SecretAction::UpToDate));
+}
+
+#[test]
+fn extra_data_key_or_changed_label_needs_apply() {
+    let spec = secret_spec("fields: [{name: password}]");
+    let secret = applied(&plan(&spec, None, now(), &mut seeded_rng(1)));
+
+    let mut extra = secret.clone();
+    extra
+        .data
+        .as_mut()
+        .unwrap()
+        .insert("stale".to_owned(), ByteString(b"x".to_vec()));
+    let p = plan(&spec, Some(&extra), now(), &mut seeded_rng(2));
+    let desired = applied(&p);
+    assert!(!desired.data.as_ref().unwrap().contains_key("stale"));
+    assert!(p.events.is_empty(), "{:?}", p.events);
+
+    let mut relabelled = secret;
+    relabelled
+        .metadata
+        .annotations
+        .as_mut()
+        .unwrap()
+        .remove(ANNOTATION_SPEC_UID);
+    let p = plan(&spec, Some(&relabelled), now(), &mut seeded_rng(2));
+    assert!(matches!(p.action, SecretAction::Apply(_)));
+}
+
+#[test]
+fn deletion_policy_switch_changes_owner_reference_only() {
+    let spec = secret_spec("fields: [{name: password}]");
+    let secret = applied(&plan(&spec, None, now(), &mut seeded_rng(1)));
+    let retain = secret_spec("{deletionPolicy: Retain, fields: [{name: password}]}");
+    let p = plan(&retain, Some(&secret), now(), &mut seeded_rng(2));
+    let desired = applied(&p);
+    assert_eq!(desired.metadata.owner_references, None);
+    assert_eq!(value(&desired, "password"), value(&secret, "password"));
+    assert!(p.events.is_empty(), "{:?}", p.events);
+}
+
+#[test]
+fn deleted_key_is_regenerated_alone() {
+    let spec = secret_spec("fields: [{name: a}, {name: b}]");
+    let secret = applied(&plan(&spec, None, now(), &mut seeded_rng(1)));
+    let mut damaged = secret.clone();
+    damaged.data.as_mut().unwrap().remove("b");
+    let p = plan(&spec, Some(&damaged), later(1), &mut seeded_rng(2));
+    let desired = applied(&p);
+    assert_eq!(value(&desired, "a"), value(&secret, "a"));
+    assert_ne!(value(&desired, "b"), value(&secret, "b"));
+    assert_eq!(reasons(&p), [EVENT_REGENERATED]);
+    assert_eq!(p.events[0].message, "regenerated keys: b");
+    assert_eq!(
+        p.status.last_generated_time.as_ref().map(|t| t.0),
+        Some(later(1))
+    );
+    // A regeneration is not a rotation: the anchor stays.
+    assert_eq!(
+        annotation(&desired, ANNOTATION_GENERATED_AT),
+        Some("2026-10-19T12:00:00Z")
+    );
+}
+
+#[test]
+fn ssh_public_key_missing_is_rederived() {
+    let spec = secret_spec("sshKeyPair: {}");
+    let secret = applied(&plan(&spec, None, now(), &mut seeded_rng(1)));
+    let mut damaged = secret.clone();
+    damaged.data.as_mut().unwrap().remove("ssh-publickey");
+    let p = plan(&spec, Some(&damaged), now(), &mut seeded_rng(2));
+    let desired = applied(&p);
+    assert_eq!(desired.data, secret.data);
+    assert!(p.events.is_empty(), "{:?}", p.events);
+    assert_eq!(
+        annotation(&desired, ANNOTATION_KEYS),
+        Some(r#"{"ssh/private-key":"ssh-privatekey","ssh/public-key":"ssh-publickey"}"#)
+    );
+}
+
+#[test]
+fn fingerprints_lost_keeps_values() {
+    let spec = secret_spec("{basicAuth: {username: admin}}");
+    let secret = applied(&plan(&spec, None, now(), &mut seeded_rng(1)));
+    for broken in [None, Some("x")] {
+        let mut damaged = secret.clone();
+        let annotations = damaged.metadata.annotations.as_mut().unwrap();
+        match broken {
+            None => annotations.remove(ANNOTATION_FINGERPRINTS),
+            Some(text) => annotations.insert(ANNOTATION_FINGERPRINTS.to_owned(), text.to_owned()),
+        };
+        let p = plan(&spec, Some(&damaged), now(), &mut seeded_rng(2));
+        let desired = applied(&p);
+        assert_eq!(desired.data, secret.data, "{broken:?}");
+        assert_eq!(
+            annotation(&desired, ANNOTATION_FINGERPRINTS),
+            annotation(&secret, ANNOTATION_FINGERPRINTS)
+        );
+        assert_eq!(reasons(&p), [EVENT_FINGERPRINTS_RESET]);
+        assert!(p.events[0].warning);
+        assert_eq!(
+            p.events[0].message,
+            "kept existing values for keys: auth, password (fingerprint metadata was missing or invalid)"
+        );
+        assert_eq!(p.status.last_generated_time, None, "no previous status");
+    }
+}
+
+#[test]
+fn rotation_due_regenerates_everything() {
+    let spec = secret_spec("{rotation: {interval: 90d}, data: {user: u}, sshKeyPair: {}}");
+    let first = plan(&spec, None, now(), &mut seeded_rng(1));
+    assert_eq!(first.requeue_after, Some(Duration::from_secs(90 * DAY)));
+    assert_eq!(
+        first.status.next_rotation_time.as_ref().map(|t| t.0),
+        Some(later(90))
+    );
+    let secret = applied(&first);
+    let spec = with_status(spec, &first);
+
+    let not_yet = plan(&spec, Some(&secret), later(30), &mut seeded_rng(2));
+    assert!(matches!(not_yet.action, SecretAction::UpToDate));
+    assert_eq!(not_yet.requeue_after, Some(Duration::from_secs(60 * DAY)));
+
+    let due = plan(&spec, Some(&secret), later(91), &mut seeded_rng(2));
+    let desired = applied(&due);
+    assert_ne!(
+        value(&desired, "ssh-privatekey"),
+        value(&secret, "ssh-privatekey")
+    );
+    assert_eq!(value(&desired, "user"), b"u");
+    assert_eq!(reasons(&due), [EVENT_ROTATED]);
+    assert_eq!(
+        due.events[0].message,
+        "rotated keys: ssh-privatekey, ssh-publickey"
+    );
+    assert_eq!(
+        annotation(&desired, ANNOTATION_GENERATED_AT),
+        Some(later(91).to_string().as_str())
+    );
+    assert_eq!(
+        due.status.last_rotation_time.as_ref().map(|t| t.0),
+        Some(later(91))
+    );
+    assert_eq!(
+        due.status.last_generated_time.as_ref().map(|t| t.0),
+        Some(later(91))
+    );
+    assert_eq!(
+        due.status.next_rotation_time.as_ref().map(|t| t.0),
+        Some(later(181))
+    );
+    assert_eq!(due.requeue_after, Some(Duration::from_secs(90 * DAY)));
+}
+
+#[test]
+fn rotation_exactly_at_the_boundary_requeues_a_full_interval() {
+    let spec = secret_spec("{rotation: {interval: 1h}, fields: [{name: p}]}");
+    let first = plan(&spec, None, now(), &mut seeded_rng(1));
+    let secret = applied(&first);
+    let one_hour_later = now().checked_add(Duration::from_secs(3600)).unwrap();
+    let due = plan(&spec, Some(&secret), one_hour_later, &mut seeded_rng(2));
+    assert_eq!(due.requeue_after, Some(Duration::from_secs(3600)));
+}
+
+#[test]
+fn unparseable_anchor_is_reset() {
+    let spec = secret_spec("{rotation: {interval: 90d}, fields: [{name: p}]}");
+    let secret = applied(&plan(&spec, None, now(), &mut seeded_rng(1)));
+    let mut damaged = secret.clone();
+    damaged
+        .metadata
+        .annotations
+        .as_mut()
+        .unwrap()
+        .insert(ANNOTATION_GENERATED_AT.to_owned(), "yesterday".to_owned());
+    let p = plan(&spec, Some(&damaged), later(200), &mut seeded_rng(2));
+    let desired = applied(&p);
+    assert_eq!(desired.data, secret.data);
+    assert_eq!(reasons(&p), [EVENT_ANCHOR_RESET]);
+    assert!(p.events[0].warning);
+    assert_eq!(
+        annotation(&desired, ANNOTATION_GENERATED_AT),
+        Some(later(200).to_string().as_str())
+    );
+}
+
+#[test]
+fn generated_at_has_seconds_precision() {
+    let spec = secret_spec("fields: [{name: p}]");
+    let fractional: Timestamp = "2026-10-19T12:00:00.987654321Z".parse().unwrap();
+    let p = plan(&spec, None, fractional, &mut seeded_rng(1));
+    let desired = applied(&p);
+    assert_eq!(
+        annotation(&desired, ANNOTATION_GENERATED_AT),
+        Some("2026-10-19T12:00:00Z")
+    );
+    assert_eq!(
+        p.status.last_generated_time.as_ref().map(|t| t.0),
+        Some(now())
+    );
+    assert_eq!(p.status.conditions[0].last_transition_time.0, now());
+}
+
+#[test]
+fn retained_secret_is_adopted_keeping_values() {
+    let spec = secret_spec("{deletionPolicy: Retain, fields: [{name: password}]}");
+    let secret = applied(&plan(&spec, None, now(), &mut seeded_rng(1)));
+    let mut recreated = secret_spec("{deletionPolicy: Retain, fields: [{name: password}]}");
+    recreated.metadata.uid = Some("new-uid".to_owned());
+    let p = plan(&recreated, Some(&secret), now(), &mut seeded_rng(2));
+    let desired = applied(&p);
+    assert_eq!(desired.data, secret.data);
+    assert_eq!(annotation(&desired, ANNOTATION_SPEC_UID), Some("new-uid"));
+    assert_eq!(reasons(&p), [EVENT_ADOPTED]);
+    assert_eq!(p.events[0].message, "adopted existing Secret db");
+}
+
+#[test]
+fn previous_owner_pending_gc_waits() {
+    let spec = secret_spec("fields: [{name: password}]");
+    let secret = applied(&plan(&spec, None, now(), &mut seeded_rng(1)));
+    let mut recreated = secret_spec("fields: [{name: password}]");
+    recreated.metadata.uid = Some("new-uid".to_owned());
+    let previous = plan(&recreated, None, now(), &mut seeded_rng(3));
+    let recreated = with_status(recreated, &previous);
+    let p = plan(&recreated, Some(&secret), later(1), &mut seeded_rng(2));
+    assert!(matches!(p.action, SecretAction::Nothing));
+    assert!(p.events.is_empty(), "{:?}", p.events);
+    assert_eq!(p.requeue_after, Some(Duration::from_secs(5)));
+    let ready = &p.status.conditions[0];
+    assert_eq!(ready.status, "False");
+    assert_eq!(ready.reason, REASON_WAITING_FOR_GC);
+    assert_eq!(ready.last_transition_time.0, later(1));
+    assert_eq!(p.status.kind, Some(SecretKind::Fields));
+    assert_eq!(
+        p.status.last_generated_time, previous.status.last_generated_time,
+        "times preserved"
+    );
+}
+
+#[test]
+fn type_change_is_a_conflict() {
+    let retained = secret_spec("{deletionPolicy: Retain, basicAuth: {username: admin}}");
+    let secret = applied(&plan(&retained, None, now(), &mut seeded_rng(1)));
+    let spec = secret_spec(
+        "{deletionPolicy: Retain, secret: {type: kubernetes.io/basic-auth}, basicAuth: {username: admin}}",
+    );
+    let p = plan(&spec, Some(&secret), now(), &mut seeded_rng(2));
+    assert!(matches!(p.action, SecretAction::Nothing));
+    let ready = &p.status.conditions[0];
+    assert_eq!(ready.reason, REASON_CONFLICT);
+    assert_eq!(
+        ready.message,
+        "Secret db has type Opaque; delete it to recreate it with type kubernetes.io/basic-auth"
+    );
+    assert_eq!(p.events.len(), 1);
+    assert!(p.events[0].warning);
+    assert_eq!(p.events[0].message, ready.message);
+}
+
+#[test]
+fn invalid_spec_writes_nothing() {
+    let spec = secret_spec("{fields: [{name: p}], sshKeyPair: {}}");
+    let p = plan(&spec, None, now(), &mut seeded_rng(1));
+    assert!(matches!(p.action, SecretAction::Nothing));
+    assert_eq!(p.status.kind, None);
+    assert_eq!(p.status.secret_name.as_deref(), Some(SPEC_NAME));
+    assert_eq!(p.status.observed_generation, Some(1));
+    let ready = &p.status.conditions[0];
+    assert_eq!(ready.reason, REASON_INVALID_SPEC);
+    assert_eq!(
+        ready.message,
+        "spec: exactly one of fields, sshKeyPair or basicAuth must be set"
+    );
+    assert_eq!(reasons(&p), [EVENT_INVALID_SPEC]);
+    assert!(p.events[0].warning);
+}
+
+#[test]
+fn low_entropy_is_reported_when_generated() {
+    let spec = secret_spec("fields: [{name: pin, length: 6, charset: hex}, {name: ok}]");
+    let first = plan(&spec, None, now(), &mut seeded_rng(1));
+    assert_eq!(
+        first.events[1].reason, EVENT_LOW_ENTROPY,
+        "{:?}",
+        first.events
+    );
+    assert!(first.events[1].warning);
+    assert_eq!(
+        first.events[1].message,
+        "keys with less than 128 bits of entropy: pin"
+    );
+    let secret = applied(&first);
+    let again = plan(&spec, Some(&secret), now(), &mut seeded_rng(2));
+    assert!(again.events.is_empty(), "kept values are not reported");
+}
+
+#[test]
+fn long_basic_auth_password_warns_about_truncation() {
+    let spec = secret_spec("basicAuth: {username: admin, password: {length: 70, prefix: abc}}");
+    let first = plan(&spec, None, now(), &mut seeded_rng(1));
+    let truncated: Vec<_> = first
+        .events
+        .iter()
+        .filter(|event| event.reason == EVENT_PASSWORD_TRUNCATED)
+        .collect();
+    assert_eq!(truncated.len(), 1);
+    assert!(truncated[0].warning);
+    assert_eq!(
+        truncated[0].message,
+        "password for key password is longer than 72 bytes; the htpasswd hash covers only the first 72 bytes"
+    );
+    let secret = applied(&first);
+    let again = plan(&spec, Some(&secret), now(), &mut seeded_rng(2));
+    assert!(again.events.is_empty(), "{:?}", again.events);
+
+    let exact = secret_spec("basicAuth: {username: admin, password: {length: 72}}");
+    let p = plan(&exact, None, now(), &mut seeded_rng(1));
+    assert!(!reasons(&p).contains(&EVENT_PASSWORD_TRUNCATED));
+}
+
+#[test]
+fn basic_auth_secret_carries_role_keys_and_username() {
+    let spec = secret_spec("basicAuth: {username: admin, keys: {htpasswd: users}}");
+    let p = plan(&spec, None, now(), &mut seeded_rng(1));
+    let desired = applied(&p);
+    assert_eq!(value(&desired, "username"), b"admin");
+    assert!(value(&desired, "users").starts_with(b"admin:$2y$12$"));
+    assert_eq!(p.events[0].message, "generated keys: password, users");
+    assert_eq!(p.status.kind, Some(SecretKind::BasicAuth));
+    assert_eq!(
+        annotation(&desired, ANNOTATION_KEYS),
+        Some(
+            r#"{"basic-auth/htpasswd":"users","basic-auth/password":"password","basic-auth/username":"username"}"#
+        )
+    );
+    let labels = desired.metadata.labels.as_ref().unwrap();
+    assert_eq!(labels[LABEL_MANAGED_BY], MANAGED_BY_VALUE);
+    assert_eq!(labels[LABEL_SPEC_NAME], SPEC_NAME);
+    assert_eq!(p.status.conditions[0].reason, REASON_GENERATED);
+    assert_eq!(
+        desired.metadata.owner_references.as_ref().unwrap()[0].uid,
+        SPEC_UID
+    );
+}
+
+#[test]
+fn debug_output_never_contains_values() {
+    let spec = secret_spec("{data: {lit: literal-value}, fields: [{name: password}]}");
+    let p = plan(&spec, None, now(), &mut seeded_rng(1));
+    let desired = applied(&p);
+    let debug = format!("{p:?}");
+    for value in desired.data.as_ref().unwrap().values() {
+        let text = String::from_utf8(value.0.clone()).unwrap();
+        assert!(!debug.contains(&text), "Debug leaks a value");
+    }
+    assert!(debug.contains("password"), "key names are shown");
+}
