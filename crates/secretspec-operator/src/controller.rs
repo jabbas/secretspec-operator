@@ -9,13 +9,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::{FutureExt, StreamExt};
 use k8s_openapi::api::core::v1::Secret;
-use kube::api::Api;
+use kube::Client;
+use kube::api::{Api, ObjectMeta, PartialObjectMeta};
 use kube::runtime::controller::{self, Controller};
 use kube::runtime::events::{Recorder, Reporter};
 use kube::runtime::reflector::{self, ObjectRef};
 use kube::runtime::utils::PredicateConfig;
 use kube::runtime::{WatchStreamExt, predicates, watcher};
-use kube::{Client, ResourceExt};
 use secretspec_api::constants::{
     FIELD_MANAGER, LABEL_MANAGED_BY, LABEL_SPEC_NAME, MANAGED_BY_VALUE,
 };
@@ -59,7 +59,8 @@ pub async fn run(
     });
 
     let namespaces = cfg.watch_namespaces();
-    let scopes: Vec<(Api<SecretSpec>, Api<Secret>)> = if namespaces.is_empty() {
+    // Secrets are watched through the metadata-only API (`PartialObjectMeta`).
+    let scopes: Vec<(Api<SecretSpec>, Api<PartialObjectMeta<Secret>>)> = if namespaces.is_empty() {
         vec![(Api::all(client.clone()), Api::all(client))]
     } else {
         namespaces
@@ -100,7 +101,11 @@ pub async fn run(
 }
 
 /// One controller for the given scope.
-fn build(specs: Api<SecretSpec>, secrets: Api<Secret>, concurrency: u16) -> Controller<SecretSpec> {
+fn build(
+    specs: Api<SecretSpec>,
+    secrets: Api<PartialObjectMeta<Secret>>,
+    concurrency: u16,
+) -> Controller<SecretSpec> {
     let (reader, writer) = reflector::store();
     // The reflector sees every event (so `Controller::store()` and the metrics
     // built from it drop deleted SecretSpecs); only the trigger stream is
@@ -113,29 +118,30 @@ fn build(specs: Api<SecretSpec>, secrets: Api<Secret>, concurrency: u16) -> Cont
         .reflect(writer)
         .applied_objects()
         .predicate_filter(predicates::generation, PredicateConfig::default());
+    // Managed Secrets are watched as metadata only, so their data never
+    // enters the operator's memory through the watch; reconcile reads the
+    // one Secret it needs with a direct GET.
     let selector = format!("{LABEL_MANAGED_BY}={MANAGED_BY_VALUE}");
+    let managed = watcher(secrets, watcher::Config::default().labels(&selector))
+        .default_backoff()
+        .touched_objects();
     Controller::for_stream(trigger, reader)
-        .watches(
-            secrets,
-            watcher::Config::default().labels(&selector),
-            secret_to_spec,
-        )
+        .watches_stream(managed, |secret: PartialObjectMeta<Secret>| {
+            secret_to_spec(&secret.metadata)
+        })
         .with_config(controller::Config::default().concurrency(concurrency))
 }
 
-/// The `SecretSpec` that owns a managed Secret: same namespace, name from the
-/// spec-name label. `None` when the label (or the namespace) is missing.
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "signature required by kube's Controller::watches mapper"
-)]
-pub fn secret_to_spec(secret: Secret) -> Option<ObjectRef<SecretSpec>> {
-    let namespace = secret.namespace()?;
-    let name = secret.labels().get(LABEL_SPEC_NAME)?;
+/// The `SecretSpec` that owns a managed Secret, from the Secret's metadata:
+/// same namespace, name from the spec-name label. `None` when the label (or
+/// the namespace) is missing.
+pub fn secret_to_spec(secret: &ObjectMeta) -> Option<ObjectRef<SecretSpec>> {
+    let namespace = secret.namespace.as_deref()?;
+    let name = secret.labels.as_ref()?.get(LABEL_SPEC_NAME)?;
     if name.is_empty() {
         return None;
     }
-    Some(ObjectRef::new(name).within(&namespace))
+    Some(ObjectRef::new(name).within(namespace))
 }
 
 /// Logs one controller result without Secret data or kube error bodies.
@@ -184,24 +190,19 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use kube::api::ObjectMeta;
-
     use super::*;
 
-    fn secret(namespace: Option<&str>, labels: &[(&str, &str)]) -> Secret {
-        Secret {
-            metadata: ObjectMeta {
-                name: Some("db-credentials".into()),
-                namespace: namespace.map(str::to_owned),
-                labels: Some(
-                    labels
-                        .iter()
-                        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-                        .collect::<BTreeMap<_, _>>(),
-                ),
-                ..ObjectMeta::default()
-            },
-            ..Secret::default()
+    fn secret(namespace: Option<&str>, labels: &[(&str, &str)]) -> ObjectMeta {
+        ObjectMeta {
+            name: Some("db-credentials".into()),
+            namespace: namespace.map(str::to_owned),
+            labels: Some(
+                labels
+                    .iter()
+                    .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                    .collect::<BTreeMap<_, _>>(),
+            ),
+            ..ObjectMeta::default()
         }
     }
 
@@ -214,24 +215,41 @@ mod tests {
                 (LABEL_MANAGED_BY, MANAGED_BY_VALUE),
             ],
         );
-        let obj = secret_to_spec(s).unwrap();
+        let obj = secret_to_spec(&s).unwrap();
         assert_eq!(obj.name, "db");
         assert_eq!(obj.namespace.as_deref(), Some("apps"));
 
         assert_eq!(
-            secret_to_spec(secret(
+            secret_to_spec(&secret(
                 Some("apps"),
                 &[(LABEL_MANAGED_BY, MANAGED_BY_VALUE)]
             )),
             None
         );
         assert_eq!(
-            secret_to_spec(secret(Some("apps"), &[(LABEL_SPEC_NAME, "")])),
+            secret_to_spec(&secret(Some("apps"), &[(LABEL_SPEC_NAME, "")])),
             None
         );
         assert_eq!(
-            secret_to_spec(secret(None, &[(LABEL_SPEC_NAME, "db")])),
+            secret_to_spec(&secret(None, &[(LABEL_SPEC_NAME, "db")])),
             None
         );
+        assert_eq!(
+            secret_to_spec(&ObjectMeta {
+                namespace: Some("apps".into()),
+                ..ObjectMeta::default()
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn secret_to_spec_maps_watched_metadata() {
+        let watched = PartialObjectMeta::<Secret> {
+            metadata: secret(Some("apps"), &[(LABEL_SPEC_NAME, "db")]),
+            ..PartialObjectMeta::default()
+        };
+        let obj = secret_to_spec(&watched.metadata).unwrap();
+        assert_eq!(obj, ObjectRef::new("db").within("apps"));
     }
 }

@@ -22,7 +22,8 @@ jiff = { version = "0.2.38", default-features = false, features = ["alloc", "std
 k8s-openapi.workspace = true
 # `ring` is the single rustls crypto provider used across the workspace.
 # `unstable-runtime` gates `Controller::for_stream`, needed to filter the
-# SecretSpec watch by generation while keeping the reflector store.
+# SecretSpec watch by generation while keeping the reflector store, and
+# `Controller::watches_stream`, needed to watch managed Secrets metadata-only.
 kube = { workspace = true, features = ["client", "runtime", "rustls-tls", "ring", "unstable-runtime"] }
 prometheus-client.workspace = true
 serde_json.workspace = true
