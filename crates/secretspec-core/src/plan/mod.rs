@@ -25,14 +25,16 @@ use rand_core::CryptoRngCore;
 use secretspec_api::constants::{
     ANNOTATION_FINGERPRINTS, ANNOTATION_GENERATED_AT, ANNOTATION_KEYS, ANNOTATION_SPEC_UID,
     EVENT_ADOPTED, EVENT_ANCHOR_RESET, EVENT_CONFLICT, EVENT_FINGERPRINTS_RESET, EVENT_GENERATED,
-    EVENT_INVALID_SPEC, EVENT_LOW_ENTROPY, EVENT_PASSWORD_TRUNCATED, EVENT_REGENERATED,
-    EVENT_ROTATED, LABEL_MANAGED_BY, LABEL_SPEC_NAME, MANAGED_BY_VALUE, REASON_CONFLICT,
-    REASON_GENERATED, REASON_INVALID_SPEC, REASON_WAITING_FOR_GC,
+    EVENT_GENERATION_FAILED, EVENT_INVALID_SPEC, EVENT_LOW_ENTROPY, EVENT_PASSWORD_TRUNCATED,
+    EVENT_REGENERATED, EVENT_ROTATED, LABEL_MANAGED_BY, LABEL_SPEC_NAME, MANAGED_BY_VALUE,
+    REASON_CONFLICT, REASON_GENERATED, REASON_GENERATION_FAILED, REASON_INVALID_SPEC,
+    REASON_WAITING_FOR_GC,
 };
 use secretspec_api::resolve::{ResolvedKind, ResolvedSpec, resolve};
 use secretspec_api::v1alpha1::{SecretKind, SecretSpec, SecretSpecStatus};
 
 use crate::fingerprint::Slot;
+use crate::generate::GenerateError;
 use crate::plan::decide::{Decision, SlotOutcome, decide};
 use crate::plan::inventory::{Anchor, inventory};
 use crate::plan::keys::KeyMap;
@@ -43,6 +45,9 @@ use crate::plan::status::{Readiness, Times};
 /// How long to wait before looking again while a previous owner's Secret is
 /// being garbage-collected.
 pub const WAIT_FOR_GC_REQUEUE: Duration = Duration::from_secs(5);
+
+/// How long to wait before retrying after a generation failure.
+pub const GENERATION_RETRY: Duration = Duration::from_secs(30);
 
 /// The shortest rotation requeue, so an overdue timer never spins.
 const MIN_REQUEUE: Duration = Duration::from_secs(1);
@@ -199,7 +204,7 @@ pub fn plan<R: CryptoRngCore + ?Sized>(
     let schedule = rotation(resolved.rotation, &anchor, scheduled, now);
     let decision = match decide(&resolved, inv.as_ref(), schedule.due, rng) {
         Ok(decision) => decision,
-        Err(error) => return halted(spec, kind, invalid_spec(error.to_string()), now),
+        Err(error) => return halt_for_generate_error(&error, spec, resolved.secret_kind(), now),
     };
 
     let desired = desired_secret(spec, &resolved, &decision, &schedule);
@@ -280,6 +285,36 @@ fn invalid_spec(message: String) -> Halt {
         },
         event: Some(PlannedEvent::warning(EVENT_INVALID_SPEC, message)),
     }
+}
+
+/// The plan for a failed generation: write nothing, report Ready False
+/// `GenerationFailed` with a Warning event and look again in
+/// [`GENERATION_RETRY`]. The failure is internal (SSH library, bcrypt), not a
+/// problem of the spec, so it is retryable. The previous status times are
+/// kept. `err`'s `Display` carries no values.
+#[must_use]
+pub fn halt_for_generate_error(
+    err: &GenerateError,
+    spec: &SecretSpec,
+    kind: SecretKind,
+    now: Timestamp,
+) -> Plan {
+    let message = format!("value generation failed: {err}");
+    let mut plan = halted(
+        spec,
+        Some(kind),
+        Halt {
+            readiness: Readiness {
+                ready: false,
+                reason: REASON_GENERATION_FAILED,
+                message: message.clone(),
+            },
+            event: Some(PlannedEvent::warning(EVENT_GENERATION_FAILED, message)),
+        },
+        whole_seconds(now),
+    );
+    plan.requeue_after = Some(GENERATION_RETRY);
+    plan
 }
 
 /// A plan that writes nothing; the previous status times are kept.

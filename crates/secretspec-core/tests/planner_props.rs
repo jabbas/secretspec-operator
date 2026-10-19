@@ -400,3 +400,50 @@ fn fingerprints_lost_keeps_values() {
         assert!(again.events.is_empty(), "{broken:?}: {:?}", again.events);
     }
 }
+
+#[test]
+fn generation_failure_is_retryable() {
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
+    use secretspec_api::constants::{EVENT_GENERATION_FAILED, REASON_GENERATION_FAILED};
+    use secretspec_api::v1alpha1::SecretKind;
+    use secretspec_core::generate::GenerateError;
+    use secretspec_core::plan::halt_for_generate_error;
+
+    let spec = secret_spec("{rotation: {interval: 90d}, fields: [{name: password}]}");
+    let first = plan(&spec, None, now(), &mut seeded_rng(1));
+    let mut spec = with_status(spec, &first);
+    let status = spec.status.as_mut().expect("status");
+    status.last_generated_time = Some(Time(earlier(3)));
+    status.last_rotation_time = Some(Time(earlier(2)));
+    status.next_rotation_time = Some(Time(later(80)));
+    let before = spec.status.clone().expect("status");
+
+    for (error, display) in [
+        (
+            GenerateError::Ssh("encode".to_owned()),
+            "value generation failed: ssh key generation failed: encode",
+        ),
+        (
+            GenerateError::Bcrypt,
+            "value generation failed: bcrypt failed",
+        ),
+    ] {
+        let p = halt_for_generate_error(&error, &spec, SecretKind::Fields, now());
+        assert!(matches!(p.action, SecretAction::Nothing), "{error}");
+        assert_eq!(p.requeue_after, Some(Duration::from_secs(30)), "{error}");
+
+        let ready = &p.status.conditions[0];
+        assert_eq!(ready.status, "False", "{error}");
+        assert_eq!(ready.reason, REASON_GENERATION_FAILED, "{error}");
+        assert_eq!(ready.message, display);
+
+        assert_eq!(reasons(&p), vec![EVENT_GENERATION_FAILED], "{error}");
+        assert!(p.events[0].warning, "{error}");
+        assert_eq!(p.events[0].message, display);
+
+        assert_eq!(p.status.kind, Some(SecretKind::Fields), "{error}");
+        assert_eq!(p.status.last_generated_time, before.last_generated_time);
+        assert_eq!(p.status.last_rotation_time, before.last_rotation_time);
+        assert_eq!(p.status.next_rotation_time, before.next_rotation_time);
+    }
+}

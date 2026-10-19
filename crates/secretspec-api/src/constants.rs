@@ -57,6 +57,9 @@ pub const EVENT_APPLY_FAILED: &str = "ApplyFailed";
 /// Event reason: a generated `basicAuth` password is longer than the 72
 /// bytes that bcrypt hashes, so the htpasswd line covers only its prefix.
 pub const EVENT_PASSWORD_TRUNCATED: &str = "PasswordTruncated";
+/// Event reason: generating a value failed inside the operator (SSH library,
+/// bcrypt); the reconcile is retried.
+pub const EVENT_GENERATION_FAILED: &str = "GenerationFailed";
 
 /// Name of the status condition reporting readiness.
 pub const CONDITION_READY: &str = "Ready";
@@ -70,6 +73,11 @@ pub const REASON_INVALID_SPEC: &str = "InvalidSpec";
 pub const REASON_APPLY_FAILED: &str = "ApplyFailed";
 /// `Ready` reason: waiting for the previous owner's garbage collection.
 pub const REASON_WAITING_FOR_GC: &str = "WaitingForGarbageCollection";
+/// `Ready` reason: generating a value failed inside the operator; retried.
+pub const REASON_GENERATION_FAILED: &str = "GenerationFailed";
+
+/// Field manager of the operator's server-side apply requests.
+pub const FIELD_MANAGER: &str = "secretspec-operator";
 
 /// Label and annotation keys under this prefix are reserved for the operator.
 pub const RESERVED_PREFIX: &str = "secretspec.jabbas.eu/";

@@ -1,0 +1,38 @@
+[package]
+name = "secretspec-operator"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+futures.workspace = true
+secretspec-api = { path = "../secretspec-api" }
+secretspec-core = { path = "../secretspec-core" }
+# The timestamp type inside k8s-openapi's `Time`; same 0.2 line as secretspec-core.
+jiff = { version = "0.2.38", default-features = false, features = ["alloc", "std"] }
+k8s-openapi.workspace = true
+# `ring` is the single rustls crypto provider used across the workspace.
+# `unstable-runtime` gates `Controller::for_stream`, needed to filter the
+# SecretSpec watch by generation while keeping the reflector store, and
+# `Controller::watches_stream`, needed to watch managed Secrets metadata-only.
+kube = { workspace = true, features = ["client", "runtime", "rustls-tls", "ring", "unstable-runtime"] }
+prometheus-client.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "net", "time", "sync"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+# Reads the generated CRD and the YAML fixtures in the kind integration suite.
+serde_norway.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
