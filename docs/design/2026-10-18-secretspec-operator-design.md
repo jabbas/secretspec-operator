@@ -305,6 +305,7 @@ The `Ready` condition:
 | `False` | `Conflict` | A Secret with the target name exists and is not managed by the operator. |
 | `False` | `InvalidSpec` | Runtime validation failed. The message says what is wrong. |
 | `False` | `ApplyFailed` | The write to the API server failed. |
+| `False` | `GenerationFailed` | Generating a value failed inside the operator (SSH key library, bcrypt), not because of the spec. Retried after 30 seconds; the message is `value generation failed: <cause>` and never contains values. |
 
 Printer columns: `Ready`, `Kind`, `Next Rotation`, `Age`.
 
@@ -428,7 +429,7 @@ There is no `regenerate` annotation and no `forceRegenerate` field. A rotation r
 | Type | Reasons |
 |---|---|
 | Normal | `Generated`, `Regenerated` (lists key names, never values), `Rotated`, `Adopted` |
-| Warning | `Conflict`, `InvalidSpec`, `LowEntropy`, `ApplyFailed`, `FingerprintsReset`, `AnchorReset`, `PasswordTruncated` (a (re)generated `basicAuth` password longer than 72 bytes: the htpasswd hash covers only the first 72) |
+| Warning | `Conflict`, `InvalidSpec`, `LowEntropy`, `ApplyFailed`, `GenerationFailed`, `FingerprintsReset`, `AnchorReset`, `PasswordTruncated` (a (re)generated `basicAuth` password longer than 72 bytes: the htpasswd hash covers only the first 72) |
 
 ## 8. Architecture **[architect]**
 
