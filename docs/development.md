@@ -31,8 +31,10 @@ which layer rejects them (`# layer: cel|schema`, see `tests/common/mod.rs`).
 | CEL rules (client-side evaluation of the generated rules) | `cargo test -p secretspec-api --test cel` | nothing |
 | `resolve()` runtime validation and defaults | `cargo test -p secretspec-api --test resolve` | nothing |
 | Real API server (CRD acceptance, CEL cost, schema, defaulting, immutability) | see below | a cluster |
+| Operator unit tests (config, foreign-key view, outcome, leader logic, metrics) | `cargo test -p secretspec-operator` | nothing |
+| Operator against a real API server (reconcile, RBAC, leader election) | see [Operator integration tests](#operator-integration-tests-on-kind) | a cluster |
 
-`cargo test --workspace` runs the first three; the server suite is `#[ignore]`d.
+`cargo test --workspace` runs the cluster-free layers; both cluster suites are `#[ignore]`d.
 Where the client-side tests and a real API server disagree, the server wins and
 the Rust types/rules are fixed.
 
@@ -97,3 +99,75 @@ SECRETSPEC_TEST_KUBECONFIG=… cargo test -p secretspec-api --test server_valida
 ```
 
 The failure output lists every offending fixture with the server's message.
+
+## Running the operator locally on kind
+
+The binary reads the usual kubeconfig (`KUBECONFIG`, else `~/.kube/config`).
+Point `KUBECONFIG` at the file kind wrote so that no other context is used:
+
+```sh
+kind create cluster --name secretspec-dev \
+  --image kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5 \
+  --kubeconfig "$TMPDIR/secretspec-dev.kubeconfig"
+export KUBECONFIG="$TMPDIR/secretspec-dev.kubeconfig"
+kubectl apply --server-side \
+  -f charts/secretspec-operator/files/crd/secretspecs.secretspec.jabbas.eu.yaml
+cargo run -p secretspec-operator -- --leader-election false --log-format text \
+  --http-bind 127.0.0.1:8080
+```
+
+In a second shell (same `KUBECONFIG`):
+
+```sh
+kubectl create namespace test
+kubectl apply -f crates/secretspec-api/tests/fixtures/valid/v01-minimal-fields.yaml
+kubectl -n test get secretspecs,secrets
+curl -s localhost:8080/readyz; curl -s localhost:8080/metrics
+```
+
+Run as yourself, the operator has your (cluster-admin) rights; the integration
+suite below is what checks it with the real, minimal RBAC. With leader
+election on you also need `--lease-namespace` and `--pod-name` (macOS has no
+hostname file to fall back to). `kind delete cluster --name secretspec-dev`
+when done.
+
+## Operator integration tests on kind
+
+`crates/secretspec-operator/tests/integration.rs` runs the operator
+in-process (`secretspec_operator::run`) against a real API server. Each test:
+
+- applies the generated CRD (left installed);
+- creates two namespaces `secretspec-it-<random>-a` and `-b`, a ServiceAccount
+  in `-a` and exactly the RBAC of design §9 — a ClusterRole in cluster mode, or
+  only Roles in `-a` in namespace mode; the Lease Role is always in `-a`;
+- runs the operator with a client that **impersonates** that ServiceAccount,
+  with its own identity and Lease name;
+- deletes the namespaces and its ClusterRole/ClusterRoleBinding afterwards,
+  also when it fails.
+
+Same cluster requirements as the server suite (disposable cluster, Docker or
+Podman with `KIND_EXPERIMENTAL_PROVIDER=podman`); the same kind cluster can
+run both suites:
+
+```sh
+kind create cluster --name secretspec-op-134 \
+  --image kindest/node:v1.34.11@sha256:44e222ee2132dab25ff87301682f89eb82c7880ea3a1bf543bfe9708fd08d67d \
+  --kubeconfig "$TMPDIR/secretspec-op-134.kubeconfig"
+SECRETSPEC_TEST_KUBECONFIG="$TMPDIR/secretspec-op-134.kubeconfig" \
+  cargo test -p secretspec-operator --test integration -- --ignored --test-threads=1
+kind delete cluster --name secretspec-op-134
+```
+
+and likewise with the 1.37 image. The suite takes about two minutes;
+`apply_failure_is_reported_and_retried` alone takes about a minute because it
+waits for two 30 s error retries. Tests must run with `--test-threads=1`:
+they share the process-wide log capture.
+
+The operator's log is captured (the namespace-mode test asserts that it has
+no `403`); set `SECRETSPEC_TEST_LOG=1` and add `--nocapture` to see it:
+
+```sh
+SECRETSPEC_TEST_LOG=1 SECRETSPEC_TEST_KUBECONFIG=… \
+  cargo test -p secretspec-operator --test integration leader_election_single_active \
+  -- --ignored --test-threads=1 --nocapture
+```

@@ -2566,6 +2566,7 @@ dependencies = [
  "secretspec-api",
  "secretspec-core",
  "serde_json",
+ "serde_norway",
  "thiserror 2.0.21",
  "tokio",
  "tracing",

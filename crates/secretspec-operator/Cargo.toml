@@ -32,4 +32,6 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+# Reads the generated CRD and the YAML fixtures in the kind integration suite.
+serde_norway.workspace = true
 tokio = { workspace = true, features = ["io-util"] }
