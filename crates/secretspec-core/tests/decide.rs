@@ -126,6 +126,27 @@ fn rule_1_renamed_role_key_moves_value() {
 }
 
 #[test]
+fn rule_1_htpasswd_rename_without_key_map_keeps_password_and_rederives_line() {
+    let s1 = spec(BASIC);
+    let d1 = first(&s1, 1);
+    let mut inv = written(&s1, &d1);
+    // No `keys` annotation: the line cannot be found under its new name.
+    inv.keys = KeyMap::default();
+    let s2 = spec("basicAuth: {username: admin, keys: {htpasswd: users}}");
+    let d2 = again(&s2, &inv, 2);
+    assert_eq!(d2.outcomes[&Slot::BasicAuthPassword], SlotOutcome::Kept);
+    assert_eq!(
+        d2.outcomes[&Slot::BasicAuthHtpasswd],
+        SlotOutcome::Rederived
+    );
+    assert_eq!(value(&d2, "password"), value(&d1, "password"));
+    assert!(!d2.data.contains_key("auth"));
+    let password = SecretValue::new(value(&d2, "password").to_vec());
+    assert!(htpasswd_verifies(value(&d2, "users"), "admin", &password));
+    assert_eq!(d2.reset_slots, BTreeSet::new());
+}
+
+#[test]
 fn rule_1_role_falls_back_to_spec_key_when_recorded_key_is_absent() {
     let s = spec("sshKeyPair: {}");
     let d1 = first(&s, 1);
@@ -318,6 +339,26 @@ fn rule_6_missing_slot_entry_keeps_and_stamps() {
     assert_eq!(value(&d2, "a"), value(&d1, "a"));
     assert_eq!(d2.reset_slots, BTreeSet::from([field("a")]));
     assert_eq!(d2.fingerprints.slots, expected_fingerprints(&s));
+}
+
+#[test]
+fn rule_6_empty_annotation_object_keeps_and_stamps() {
+    for yaml in [FIELDS, "sshKeyPair: {}", BASIC] {
+        let s = spec(yaml);
+        let d1 = first(&s, 1);
+        let mut inv = written(&s, &d1);
+        let parsed = FingerprintMap::from_annotation("{}").unwrap();
+        assert_eq!(parsed.problems.len(), 0);
+        inv.fingerprints = Some(parsed);
+        let d2 = again(&s, &inv, 2);
+        assert!(all(&d2, SlotOutcome::Kept), "{yaml}: {:?}", d2.outcomes);
+        let every: BTreeSet<Slot> = d2.outcomes.keys().cloned().collect();
+        assert_eq!(d2.reset_slots, every, "{yaml}");
+        assert_eq!(d2.fingerprints, d1.fingerprints, "{yaml}");
+        for (key, v) in &d1.data {
+            assert_eq!(value(&d2, key), v.expose(), "{yaml}: {key} changed");
+        }
+    }
 }
 
 #[test]
@@ -570,6 +611,10 @@ fn rule_8_stale_htpasswd_fingerprint_rederives_even_if_line_verifies() {
         SlotOutcome::Rederived
     );
     assert_ne!(value(&d2, "auth"), value(&d1, "auth"));
+    // The stale fingerprint is a mismatch, not lost metadata: the password
+    // is untouched and nothing is reported as reset.
+    assert_eq!(d2.outcomes[&Slot::BasicAuthPassword], SlotOutcome::Kept);
+    assert_eq!(value(&d2, "password"), value(&d1, "password"));
     assert_eq!(d2.reset_slots, BTreeSet::new());
 }
 
