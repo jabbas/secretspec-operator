@@ -460,6 +460,90 @@ fn ssh_comment_change_keeps_key() {
     assert_eq!(blob(&renamed), blob(&pair.public_key));
 }
 
+/// A committed SSH fixture: private key file name, its parameters and the
+/// expected `authorized_keys` line for comment `fixture`.
+struct Golden {
+    name: &'static str,
+    params: SshAlgorithmParams,
+    private_key: &'static [u8],
+    public_line: &'static str,
+}
+
+macro_rules! golden {
+    ($name:literal, $params:expr) => {
+        Golden {
+            name: $name,
+            params: $params,
+            private_key: include_bytes!(concat!("fixtures/ssh/", $name)),
+            public_line: include_str!(concat!("fixtures/ssh/", $name, ".pub")),
+        }
+    };
+}
+
+const P256: SshAlgorithmParams = SshAlgorithmParams::Ecdsa {
+    curve: EcdsaCurve::P256,
+};
+const P384: SshAlgorithmParams = SshAlgorithmParams::Ecdsa {
+    curve: EcdsaCurve::P384,
+};
+const P521: SshAlgorithmParams = SshAlgorithmParams::Ecdsa {
+    curve: EcdsaCurve::P521,
+};
+const RSA_2048: SshAlgorithmParams = SshAlgorithmParams::Rsa { bits: 2048 };
+const RSA_3072: SshAlgorithmParams = SshAlgorithmParams::Rsa { bits: 3072 };
+const RSA_4096: SshAlgorithmParams = SshAlgorithmParams::Rsa { bits: 4096 };
+const ED25519: SshAlgorithmParams = SshAlgorithmParams::Ed25519;
+
+/// Every supported parameter set, for the negative checks.
+const ALL_SSH_PARAMS: [SshAlgorithmParams; 7] =
+    [ED25519, RSA_2048, RSA_3072, RSA_4096, P256, P384, P521];
+
+/// Golden private keys, one set written by this crate and one by OpenSSH's
+/// `ssh-keygen` (see `fixtures/ssh/README.md`).
+///
+/// A failure here blocks a release: stored private keys that no longer match
+/// their parameters, or whose re-derived public line changes, would make the
+/// operator regenerate or rewrite every SSH key pair on upgrade.
+#[test]
+fn ssh_golden_fixtures() {
+    let fixtures = [
+        golden!("crate-ed25519", ED25519),
+        golden!("crate-rsa-2048", RSA_2048),
+        golden!("crate-rsa-3072", RSA_3072),
+        golden!("crate-rsa-4096", RSA_4096),
+        golden!("crate-ecdsa-p256", P256),
+        golden!("crate-ecdsa-p384", P384),
+        golden!("crate-ecdsa-p521", P521),
+        golden!("openssh-ed25519", ED25519),
+        golden!("openssh-rsa-2048", RSA_2048),
+        golden!("openssh-rsa-3072", RSA_3072),
+        golden!("openssh-rsa-4096", RSA_4096),
+        golden!("openssh-ecdsa-p256", P256),
+        golden!("openssh-ecdsa-p384", P384),
+        golden!("openssh-ecdsa-p521", P521),
+    ];
+    for golden in &fixtures {
+        assert!(
+            private_key_matches(golden.private_key, golden.params),
+            "{} no longer matches its parameters",
+            golden.name
+        );
+        for other in ALL_SSH_PARAMS.into_iter().filter(|p| *p != golden.params) {
+            assert!(
+                !private_key_matches(golden.private_key, other),
+                "{} matches {other:?}",
+                golden.name
+            );
+        }
+        assert_eq!(
+            public_key_line(golden.private_key, "fixture").unwrap(),
+            golden.public_line,
+            "{}: re-derived public key line changed",
+            golden.name
+        );
+    }
+}
+
 #[test]
 fn public_key_line_rejects_garbage() {
     assert!(matches!(
