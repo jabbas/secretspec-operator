@@ -34,20 +34,29 @@ pub fn init_logging(level: &str, format: LogFormat) -> Result<(), anyhow::Error>
     Ok(())
 }
 
-/// The built-in directive that silences the kube HTTP client.
-const KUBE_CLIENT_OFF: &str = "kube_client::client=off";
+/// The kube client crate's tracing target.
+const KUBE_CLIENT: &str = "kube_client";
+/// The built-in directive that silences the whole kube client crate.
+const KUBE_CLIENT_OFF: &str = "kube_client=off";
 
-/// The tracing filter for `level`, with the kube HTTP client's own logging
-/// switched off whatever `level` says: it logs response bodies (which for a
-/// Secret contain its data) when decoding fails and API error messages (which
-/// can echo submitted data) at debug level. Our own logs report kube errors
-/// as code and reason only.
+/// The tracing filter for `level`, with the kube client crate's own logging
+/// switched off whatever `level` says: its HTTP client logs response bodies
+/// (which for a Secret contain its data) when decoding fails and API error
+/// messages (which can echo submitted data) at debug level. Our own logs
+/// report kube errors as code and reason only.
 ///
 /// User directives that could re-enable it are dropped and returned: any
 /// directive whose target starts with `kube_client`, and any span-filter
 /// directive (`target[span]=level`) whose target is empty or a prefix of
 /// `kube_client` — span directives take precedence over the static `off`.
-fn filter(level: &str) -> Result<(EnvFilter, Vec<String>), anyhow::Error> {
+///
+/// This is the filter [`init_logging`] installs; it is public so tests can
+/// capture logs exactly as production filters them.
+///
+/// # Errors
+///
+/// Returns an error if `level` is not a valid filter.
+pub fn filter(level: &str) -> Result<(EnvFilter, Vec<String>), anyhow::Error> {
     // Validate the whole string first so a malformed directive is reported
     // even if it would have been dropped.
     EnvFilter::try_new(level).map_err(|e| anyhow::anyhow!("invalid log level {level:?}: {e}"))?;
@@ -93,8 +102,7 @@ fn split_directives(level: &str) -> Vec<&str> {
 /// Whether `directive` could enable events of the `kube_client` crate.
 fn reaches_kube_client(directive: &str) -> bool {
     let target = directive_target(directive);
-    target.starts_with("kube_client")
-        || (directive.contains('[') && KUBE_CLIENT_OFF.starts_with(target))
+    target.starts_with(KUBE_CLIENT) || (directive.contains('[') && KUBE_CLIENT.starts_with(target))
 }
 
 /// The target of a directive; empty for a bare level (`info`) or a
@@ -112,6 +120,10 @@ fn directive_target(directive: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::sync::{Arc, Mutex};
+
     use super::*;
 
     #[test]
@@ -175,13 +187,76 @@ mod tests {
         ] {
             let (filter, _) = filter(level).unwrap();
             assert!(
-                filter.to_string().contains("kube_client::client=off"),
+                filter.to_string().contains("kube_client=off"),
                 "{level}: {filter}"
             );
             assert!(
                 !filter.to_string().contains("kube_client::client=trace"),
                 "{level}: {filter}"
             );
+        }
+    }
+
+    /// Collects formatted log output in memory.
+    #[derive(Clone, Default)]
+    struct Capture(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Capture {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// What `level` lets through, from events emitted by every relevant
+    /// target at every level.
+    fn emitted(level: &str) -> String {
+        let (filter, _) = filter(level).unwrap();
+        let capture = Capture::default();
+        let writer = capture.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::trace!(target: "kube_client::client", "LEAK-client-trace");
+            tracing::debug!(target: "kube_client::client", "LEAK-client-debug");
+            tracing::error!(target: "kube_client::client", "LEAK-client-error");
+            tracing::trace!(target: "kube_client::client::builder", "LEAK-builder");
+            tracing::debug!(target: "kube_client::config", "LEAK-config");
+            tracing::warn!(target: "kube_client", "LEAK-root");
+            tracing::trace!(target: "secretspec_operator", "own-trace");
+            tracing::info!(target: "kube_runtime", "runtime-info");
+        });
+        let bytes = capture
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        String::from_utf8(bytes).unwrap()
+    }
+
+    #[test]
+    fn trace_level_keeps_the_whole_kube_client_crate_silent() {
+        for level in [
+            "trace",
+            "kube_client=trace,trace",
+            "kube_client::client=trace,trace",
+            "[HTTP]=trace,trace",
+            "kube=trace,trace",
+        ] {
+            let logs = emitted(level);
+            assert!(!logs.contains("LEAK"), "{level}: {logs}");
+            assert!(logs.contains("own-trace"), "{level}: {logs}");
+            assert!(logs.contains("runtime-info"), "{level}: {logs}");
         }
     }
 }
