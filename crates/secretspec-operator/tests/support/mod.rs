@@ -77,13 +77,21 @@ impl std::io::Write for CaptureWriter {
     }
 }
 
+/// The capture's log level: the operator's own logs at debug (a user may set
+/// that in production) and quieter transport crates; built by the
+/// production filter builder, so `kube_client` is silenced exactly as in
+/// production.
+const LOG_LEVEL: &str =
+    "secretspec_operator=debug,info,kube=warn,hyper=warn,tower=warn,rustls=warn";
+
 fn init_logging() {
     static INIT: OnceLock<()> = OnceLock::new();
     INIT.get_or_init(|| {
+        let (filter, ignored) =
+            secretspec_operator::logging::filter(LOG_LEVEL).expect("valid test log level");
+        assert!(ignored.is_empty(), "test log level dropped {ignored:?}");
         let _ = tracing_subscriber::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::new(
-                "info,kube=warn,hyper=warn,tower=warn,rustls=warn",
-            ))
+            .with_env_filter(filter)
             .with_ansi(false)
             .with_writer(|| CaptureWriter)
             .try_init();

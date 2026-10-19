@@ -64,12 +64,55 @@ fn assert_owned_by(secret: &Secret, spec: &SecretSpec) {
     assert_eq!(owner.controller, Some(true));
 }
 
-/// 1. The examples generate Secrets with the expected keys and metadata.
+/// Values shorter than this are not checked against the logs: they are
+/// literal, non-secret values (the `admin` username) that may well occur in
+/// unrelated log text.
+const MIN_CHECKED_LEN: usize = 8;
+
+/// The strings that would betray `value` in a log: its UTF-8 text (and, for
+/// multi-line values such as PEM keys, each long line) and its base64 form.
+fn leak_needles(value: &ByteString) -> Vec<String> {
+    let mut needles = Vec::new();
+    if value.0.len() < MIN_CHECKED_LEN {
+        return needles;
+    }
+    if let Ok(text) = std::str::from_utf8(&value.0) {
+        needles.push(text.to_owned());
+        needles.extend(
+            text.lines()
+                .map(str::trim)
+                .filter(|line| line.len() >= 16 && !line.starts_with("-----"))
+                .map(str::to_owned),
+        );
+    }
+    match serde_json::to_value(value).expect("ByteString serialises") {
+        serde_json::Value::String(base64) => needles.push(base64),
+        other => panic!("ByteString is not a string: {other}"),
+    }
+    needles
+}
+
+/// Asserts that no value of `secret` occurs in `logs`.
+fn assert_not_logged(secret: &Secret, logs: &str) {
+    let name = secret.name_any();
+    for (key, value) in secret.data.iter().flatten() {
+        for needle in leak_needles(value) {
+            assert!(
+                !logs.contains(&needle),
+                "{name}/{key}: a generated value appears in the operator logs"
+            );
+        }
+    }
+}
+
+/// 1. The examples generate Secrets with the expected keys and metadata, and
+/// no generated value (raw or base64) is ever logged.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "needs a cluster: set SECRETSPEC_TEST_KUBECONFIG"]
 async fn examples_generate_secrets() {
     with_env(Rbac::Cluster, |env: Arc<Env>| async move {
         let ns = env.ns_a.clone();
+        let mark = log_mark();
         let operator = env.start_default();
         let cases: [(&str, &[&str]); 5] = [
             ("v01-minimal-fields.yaml", &["password"]),
@@ -152,8 +195,34 @@ async fn examples_generate_secrets() {
         assert!(!rds["password"].contains(['/', '@', '"', ' ']));
 
         operator.stop().await.unwrap();
+        let names = cases.map(|(file, _)| file.trim_end_matches(".yaml"));
+        assert_values_not_logged(&env, &ns, &names, mark).await;
     })
     .await;
+}
+
+/// Asserts that no value of the Secrets `ns/names` occurs in the operator
+/// logs captured since `mark`.
+async fn assert_values_not_logged(env: &Env, ns: &str, names: &[&str], mark: usize) {
+    let logs = logs_since(mark);
+    assert!(
+        names
+            .iter()
+            .any(|name| !reconciled_lines(mark, ns, name).is_empty()),
+        "log capture saw no reconcile"
+    );
+    let mut checked = 0;
+    for name in names {
+        let secret = env.secrets(ns).get(name).await.unwrap();
+        checked += secret
+            .data
+            .iter()
+            .flatten()
+            .filter(|(_, v)| !leak_needles(v).is_empty())
+            .count();
+        assert_not_logged(&secret, &logs);
+    }
+    assert!(checked >= names.len(), "too few values checked: {checked}");
 }
 
 /// 2. A restart of the operator changes no value and writes nothing.
