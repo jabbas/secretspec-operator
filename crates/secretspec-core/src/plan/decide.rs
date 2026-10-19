@@ -8,7 +8,7 @@
 //! damaged fingerprint metadata never causes a regeneration; the present value
 //! is kept and the expected fingerprint is stamped again.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rand_core::CryptoRngCore;
 use secretspec_api::constants::BCRYPT_COST;
@@ -51,9 +51,19 @@ pub struct Decision {
     pub fingerprints: FingerprintMap,
     /// The outcome of every slot in the spec.
     pub outcomes: BTreeMap<Slot, SlotOutcome>,
+    /// The slots whose present value was kept although their stored
+    /// fingerprint was missing or invalid; the expected fingerprint was
+    /// stamped again.
+    pub reset_slots: BTreeSet<Slot>,
+}
+
+impl Decision {
     /// Some present value was kept although its fingerprint was missing or
     /// invalid.
-    pub fingerprints_reset: bool,
+    #[must_use]
+    pub fn fingerprints_reset(&self) -> bool {
+        !self.reset_slots.is_empty()
+    }
 }
 
 /// Decides every slot of `spec` against the existing Secret `inv`.
@@ -78,7 +88,7 @@ pub fn decide<R: CryptoRngCore + ?Sized>(
             data: BTreeMap::new(),
             fingerprints: FingerprintMap::default(),
             outcomes: BTreeMap::new(),
-            fingerprints_reset: false,
+            reset_slots: BTreeSet::new(),
         },
     };
     match &spec.kind {
@@ -156,7 +166,9 @@ impl<'a> Decider<'a> {
     }
 
     fn record(&mut self, slot: Slot, outcome: SlotOutcome, reset: bool) {
-        self.decision.fingerprints_reset |= reset;
+        if reset {
+            self.decision.reset_slots.insert(slot.clone());
+        }
         self.decision.outcomes.insert(slot, outcome);
     }
 

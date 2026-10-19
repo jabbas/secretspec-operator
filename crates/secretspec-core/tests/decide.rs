@@ -7,7 +7,7 @@
 
 mod support;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use secretspec_api::constants::BCRYPT_COST;
 use secretspec_api::resolve::{ResolvedSpec, SshAlgorithmParams, resolve};
@@ -122,7 +122,7 @@ fn rule_1_renamed_role_key_moves_value() {
     assert!(!d2.data.contains_key("auth"));
     assert_eq!(value(&d2, "username"), b"admin");
     assert!(all(&d2, SlotOutcome::Kept), "{:?}", d2.outcomes);
-    assert!(!d2.fingerprints_reset);
+    assert_eq!(d2.reset_slots, BTreeSet::new());
 }
 
 #[test]
@@ -166,7 +166,7 @@ fn rule_2_no_secret_generates_every_slot() {
         let s = spec(yaml);
         let d = first(&s, 1);
         assert!(all(&d, SlotOutcome::Generated), "{yaml}: {:?}", d.outcomes);
-        assert!(!d.fingerprints_reset);
+        assert_eq!(d.reset_slots, BTreeSet::new());
     }
 }
 
@@ -181,7 +181,7 @@ fn rule_2_force_all_regenerates_every_slot() {
             "{yaml}: {:?}",
             d2.outcomes
         );
-        assert!(!d2.fingerprints_reset);
+        assert_eq!(d2.reset_slots, BTreeSet::new());
         for (key, v) in &d1.data {
             if key == "username" {
                 continue;
@@ -226,7 +226,7 @@ fn rule_4_matching_fingerprints_keep_everything() {
         let d1 = first(&s, 1);
         let d2 = again(&s, &written(&s, &d1), 2);
         assert!(all(&d2, SlotOutcome::Kept), "{yaml}: {:?}", d2.outcomes);
-        assert!(!d2.fingerprints_reset);
+        assert_eq!(d2.reset_slots, BTreeSet::new());
         assert_eq!(d2.fingerprints, d1.fingerprints);
         assert_eq!(d2.data.len(), d1.data.len());
         for (key, v) in &d1.data {
@@ -263,7 +263,7 @@ fn rule_5_foreign_fingerprint_regenerates() {
     let d2 = again(&s, &inv, 2);
     assert_eq!(d2.outcomes[&field("a")], SlotOutcome::Regenerated);
     assert_eq!(d2.outcomes[&field("b")], SlotOutcome::Kept);
-    assert!(!d2.fingerprints_reset);
+    assert_eq!(d2.reset_slots, BTreeSet::new());
 }
 
 #[test]
@@ -292,7 +292,9 @@ fn rule_6_absent_annotation_keeps_and_stamps() {
         inv.fingerprints = None;
         let d2 = again(&s, &inv, 2);
         assert!(all(&d2, SlotOutcome::Kept), "{yaml}: {:?}", d2.outcomes);
-        assert!(d2.fingerprints_reset, "{yaml}");
+        assert!(d2.fingerprints_reset(), "{yaml}");
+        let every: BTreeSet<Slot> = d2.outcomes.keys().cloned().collect();
+        assert_eq!(d2.reset_slots, every, "{yaml}");
         assert_eq!(d2.fingerprints, d1.fingerprints, "{yaml}");
         for (key, v) in &d1.data {
             assert_eq!(value(&d2, key), v.expose(), "{yaml}: {key} changed");
@@ -314,7 +316,7 @@ fn rule_6_missing_slot_entry_keeps_and_stamps() {
     let d2 = again(&s, &inv, 2);
     assert_eq!(d2.outcomes[&field("a")], SlotOutcome::Kept);
     assert_eq!(value(&d2, "a"), value(&d1, "a"));
-    assert!(d2.fingerprints_reset);
+    assert_eq!(d2.reset_slots, BTreeSet::from([field("a")]));
     assert_eq!(d2.fingerprints.slots, expected_fingerprints(&s));
 }
 
@@ -330,7 +332,7 @@ fn rule_6_invalid_slot_entry_keeps_and_stamps() {
     inv.fingerprints = Some(parsed);
     let d2 = again(&s, &inv, 2);
     assert!(all(&d2, SlotOutcome::Kept), "{:?}", d2.outcomes);
-    assert!(d2.fingerprints_reset);
+    assert_eq!(d2.reset_slots, BTreeSet::from([field("a")]));
     assert_eq!(d2.fingerprints.slots, expected_fingerprints(&s));
 }
 
@@ -344,7 +346,11 @@ fn rule_6_absent_fingerprint_with_missing_value_regenerates_without_reset() {
     let d2 = again(&s, &inv, 2);
     assert_eq!(d2.outcomes[&field("a")], SlotOutcome::Regenerated);
     assert_eq!(d2.outcomes[&field("b")], SlotOutcome::Kept);
-    assert!(d2.fingerprints_reset, "b was kept without a fingerprint");
+    assert_eq!(
+        d2.reset_slots,
+        BTreeSet::from([field("b")]),
+        "b was kept without a fingerprint"
+    );
 }
 
 // --- Rule 7: SSH -------------------------------------------------------
@@ -360,7 +366,7 @@ fn rule_7_comment_change_rederives_public_line() {
     let want = public_key_line(value(&d1, "ssh-privatekey"), "new").unwrap();
     assert_eq!(value(&d2, "ssh-publickey"), want.as_bytes());
     assert!(want.ends_with(" new\n"));
-    assert!(!d2.fingerprints_reset);
+    assert_eq!(d2.reset_slots, BTreeSet::new());
 }
 
 #[test]
@@ -406,7 +412,7 @@ fn rule_7_unparseable_private_key_regenerates_pair() {
             SshAlgorithmParams::Ed25519
         ));
         // Nothing was kept, so nothing was reset.
-        assert!(!d2.fingerprints_reset);
+        assert_eq!(d2.reset_slots, BTreeSet::new());
     }
 }
 
@@ -473,7 +479,7 @@ fn rule_8_username_change_keeps_password_and_rederives_line() {
         d2.fingerprints.slots,
         expected_with_htpasswd(&s2, &d2, "root")
     );
-    assert!(!d2.fingerprints_reset);
+    assert_eq!(d2.reset_slots, BTreeSet::new());
 }
 
 #[test]
@@ -512,7 +518,7 @@ fn rule_8_lost_htpasswd_fingerprint_keeps_verifying_line() {
     let d2 = again(&s, &inv, 2);
     assert!(all(&d2, SlotOutcome::Kept), "{:?}", d2.outcomes);
     assert_eq!(value(&d2, "auth"), value(&d1, "auth"));
-    assert!(d2.fingerprints_reset);
+    assert_eq!(d2.reset_slots, BTreeSet::from([Slot::BasicAuthHtpasswd]));
     assert_eq!(d2.fingerprints, d1.fingerprints);
 }
 
@@ -564,7 +570,7 @@ fn rule_8_stale_htpasswd_fingerprint_rederives_even_if_line_verifies() {
         SlotOutcome::Rederived
     );
     assert_ne!(value(&d2, "auth"), value(&d1, "auth"));
-    assert!(!d2.fingerprints_reset);
+    assert_eq!(d2.reset_slots, BTreeSet::new());
 }
 
 #[test]

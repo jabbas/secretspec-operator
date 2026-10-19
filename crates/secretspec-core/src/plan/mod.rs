@@ -34,7 +34,7 @@ use secretspec_api::v1alpha1::{SecretKind, SecretSpec, SecretSpecStatus};
 
 use crate::fingerprint::Slot;
 use crate::plan::decide::{Decision, SlotOutcome, decide};
-use crate::plan::inventory::{Anchor, Inventory, inventory};
+use crate::plan::inventory::{Anchor, inventory};
 use crate::plan::keys::KeyMap;
 use crate::plan::ownership::{Ownership, owner_references, ownership};
 use crate::plan::rotation::{RotationPlan, rotation};
@@ -197,8 +197,15 @@ pub fn plan<R: CryptoRngCore + ?Sized>(
     };
 
     let desired = desired_secret(spec, &resolved, &decision, &schedule);
+    // `up_to_date` only sees what the operator applies, so a label or
+    // annotation removed from the spec would never leave the Secret. A new
+    // generation re-applies once: server-side apply then drops the fields our
+    // field manager no longer sets. The status records the generation, so the
+    // next call compares again.
     let action = match existing {
-        Some(existing) if up_to_date(existing, &desired) => SecretAction::UpToDate,
+        Some(existing) if up_to_date(existing, &desired) && generation_observed(spec) => {
+            SecretAction::UpToDate
+        }
         _ => SecretAction::Apply(Box::new(desired)),
     };
 
@@ -207,7 +214,7 @@ pub fn plan<R: CryptoRngCore + ?Sized>(
         name,
         resolved: &resolved,
         decision: &decision,
-        inv: inv.as_ref(),
+        existed: inv.is_some(),
         owner: &owner,
         schedule: &schedule,
         regenerated: &regenerated,
@@ -442,32 +449,12 @@ fn regenerated_keys<'a>(resolved: &'a ResolvedSpec, decision: &'a Decision) -> B
         .collect()
 }
 
-/// The keys whose present value was kept although its slot's fingerprint was
-/// missing or invalid, sorted.
-fn reset_keys<'a>(
-    resolved: &'a ResolvedSpec,
-    decision: &'a Decision,
-    inv: Option<&Inventory>,
-) -> BTreeSet<&'a str> {
-    let stored = |slot: &Slot| {
-        inv.and_then(|inv| inv.fingerprints.as_ref())
-            .is_some_and(|parsed| parsed.map.slots.contains_key(slot))
-    };
-    let mut keys = BTreeSet::new();
-    for (slot, outcome) in &decision.outcomes {
-        if stored(slot) {
-            continue;
-        }
-        match (outcome, slot, &resolved.kind) {
-            (SlotOutcome::Kept, _, _) => keys.extend(slot_keys(resolved, slot)),
-            // The private key was kept; its public line was rewritten.
-            (SlotOutcome::Rederived, Slot::SshKeyPair, ResolvedKind::SshKeyPair(ssh)) => {
-                keys.insert(ssh.private_key_key.as_str());
-            }
-            _ => {}
-        }
-    }
-    keys
+/// Whether the current status already reflects `metadata.generation`. A
+/// missing status has observed nothing.
+fn generation_observed(spec: &SecretSpec) -> bool {
+    spec.status
+        .as_ref()
+        .is_some_and(|status| status.observed_generation == spec.metadata.generation)
 }
 
 fn join(keys: &BTreeSet<&str>) -> String {
@@ -478,7 +465,8 @@ struct EventInput<'a> {
     name: &'a str,
     resolved: &'a ResolvedSpec,
     decision: &'a Decision,
-    inv: Option<&'a Inventory>,
+    /// A Secret existed before this plan.
+    existed: bool,
     owner: &'a Ownership,
     schedule: &'a RotationPlan,
     regenerated: &'a BTreeSet<&'a str>,
@@ -489,14 +477,14 @@ fn events(input: &EventInput<'_>) -> Vec<PlannedEvent> {
         name,
         resolved,
         decision,
-        inv,
+        existed,
         owner,
         schedule,
         regenerated,
     } = input;
     let mut events = Vec::new();
 
-    if inv.is_none() {
+    if !existed {
         events.push(PlannedEvent::normal(
             EVENT_GENERATED,
             format!("generated keys: {}", join(regenerated)),
@@ -520,12 +508,17 @@ fn events(input: &EventInput<'_>) -> Vec<PlannedEvent> {
         ));
     }
 
-    if decision.fingerprints_reset {
+    if decision.fingerprints_reset() {
+        let keys: BTreeSet<&str> = decision
+            .reset_slots
+            .iter()
+            .flat_map(|slot| slot_keys(resolved, slot))
+            .collect();
         events.push(PlannedEvent::warning(
             EVENT_FINGERPRINTS_RESET,
             format!(
                 "kept existing values for keys: {} (fingerprint metadata was missing or invalid)",
-                join(&reset_keys(resolved, decision, inv))
+                join(&keys)
             ),
         ));
     }

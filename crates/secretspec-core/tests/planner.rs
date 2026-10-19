@@ -79,19 +79,60 @@ fn feeding_the_desired_secret_back_is_up_to_date() {
         let second = plan(&spec, Some(&secret), later(1), &mut seeded_rng(2));
         assert!(matches!(second.action, SecretAction::UpToDate), "{yaml}");
         assert!(second.events.is_empty(), "{yaml}: {:?}", second.events);
-        assert_eq!(
-            second.status.conditions, first.status.conditions,
-            "{yaml}: condition unchanged"
-        );
-        assert_eq!(
-            second.status.last_generated_time,
-            first.status.last_generated_time
-        );
-        assert_eq!(
-            second.status.next_rotation_time,
-            first.status.next_rotation_time
-        );
+        assert_eq!(second.status, first.status, "{yaml}: status unchanged");
     }
+}
+
+#[test]
+fn same_generation_is_up_to_date() {
+    let spec = secret_spec("fields: [{name: password}]");
+    let first = plan(&spec, None, now(), &mut seeded_rng(1));
+    let secret = applied(&first);
+
+    // Without a status nothing has been observed yet: re-apply, silently.
+    let unobserved = plan(&spec, Some(&secret), now(), &mut seeded_rng(2));
+    assert_eq!(applied(&unobserved), secret);
+    assert!(unobserved.events.is_empty(), "{:?}", unobserved.events);
+    assert_eq!(unobserved.status.observed_generation, Some(1));
+
+    let spec = with_status(spec, &unobserved);
+    let observed = plan(&spec, Some(&secret), now(), &mut seeded_rng(3));
+    assert!(matches!(observed.action, SecretAction::UpToDate));
+    assert!(observed.events.is_empty(), "{:?}", observed.events);
+    assert_eq!(observed.status, unobserved.status);
+}
+
+#[test]
+fn removed_spec_label_triggers_reapply() {
+    let old = secret_spec("{secret: {labels: {team: a}}, fields: [{name: password}]}");
+    let first = plan(&old, None, now(), &mut seeded_rng(1));
+    let secret = applied(&first);
+    assert_eq!(secret.metadata.labels.as_ref().unwrap()["team"], "a");
+
+    let mut new = secret_spec("fields: [{name: password}]");
+    new.metadata.generation = Some(2);
+    let new = with_status(new, &first);
+    let p = plan(&new, Some(&secret), later(1), &mut seeded_rng(2));
+    let desired = applied(&p);
+    assert!(
+        !desired
+            .metadata
+            .labels
+            .as_ref()
+            .unwrap()
+            .contains_key("team")
+    );
+    assert_eq!(desired.data, secret.data);
+    assert!(p.events.is_empty(), "{:?}", p.events);
+    assert_eq!(p.status.observed_generation, Some(2));
+    assert_eq!(p.status.conditions[0].observed_generation, Some(2));
+
+    // After the re-apply (server-side apply dropped the label) the next
+    // call with the recorded generation is up to date.
+    let new = with_status(new, &p);
+    let again = plan(&new, Some(&desired), later(2), &mut seeded_rng(3));
+    assert!(matches!(again.action, SecretAction::UpToDate));
+    assert!(again.events.is_empty(), "{:?}", again.events);
 }
 
 #[test]
@@ -99,6 +140,7 @@ fn foreign_metadata_and_owners_do_not_count() {
     let spec = secret_spec("fields: [{name: password}]");
     let first = plan(&spec, None, now(), &mut seeded_rng(1));
     let mut secret = applied(&first);
+    let spec = with_status(spec, &first);
     secret
         .metadata
         .labels
@@ -159,13 +201,23 @@ fn extra_data_key_or_changed_label_needs_apply() {
 #[test]
 fn deletion_policy_switch_changes_owner_reference_only() {
     let spec = secret_spec("fields: [{name: password}]");
-    let secret = applied(&plan(&spec, None, now(), &mut seeded_rng(1)));
-    let retain = secret_spec("{deletionPolicy: Retain, fields: [{name: password}]}");
+    let first = plan(&spec, None, now(), &mut seeded_rng(1));
+    let secret = applied(&first);
+    let mut retain = secret_spec("{deletionPolicy: Retain, fields: [{name: password}]}");
+    retain.metadata.generation = Some(2);
+    let retain = with_status(retain, &first);
     let p = plan(&retain, Some(&secret), now(), &mut seeded_rng(2));
     let desired = applied(&p);
     assert_eq!(desired.metadata.owner_references, None);
     assert_eq!(value(&desired, "password"), value(&secret, "password"));
     assert!(p.events.is_empty(), "{:?}", p.events);
+
+    // The applied Secret no longer has our controller reference; the next
+    // call recognises it by `spec-uid` and finds it up to date.
+    let retain = with_status(retain, &p);
+    let again = plan(&retain, Some(&desired), later(1), &mut seeded_rng(3));
+    assert!(matches!(again.action, SecretAction::UpToDate));
+    assert!(again.events.is_empty(), "{:?}", again.events);
 }
 
 #[test]
