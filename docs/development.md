@@ -171,3 +171,44 @@ SECRETSPEC_TEST_LOG=1 SECRETSPEC_TEST_KUBECONFIG=… \
   cargo test -p secretspec-operator --test integration leader_election_single_active \
   -- --ignored --test-threads=1 --nocapture
 ```
+
+## Building the image
+
+The image is the prebuilt static musl binary on
+`gcr.io/distroless/static-debian12:nonroot` (pinned by digest in
+`build/Containerfile`); it runs as UID/GID 65532 and works with a read-only
+root filesystem. Binaries are cross-compiled with
+[cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild), so no Docker
+is needed to build them and the same command works on macOS and Linux.
+
+One-time setup (user-level; versions used by CI and last verified locally):
+
+```sh
+rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+cargo install --locked cargo-zigbuild --version 0.23.4
+python3 -m venv ~/.local/share/zig-venv
+~/.local/share/zig-venv/bin/pip install ziglang==0.17.0
+export PATH="$HOME/.local/share/zig-venv/bin:$PATH"   # cargo-zigbuild finds `python3 -m ziglang`
+```
+
+Build the binaries (stripped, `--locked`) into `target/dist/<arch>/`:
+
+```sh
+cargo xtask dist --target x86_64-unknown-linux-musl --release    # target/dist/amd64/
+cargo xtask dist --target aarch64-unknown-linux-musl --release   # target/dist/arm64/
+file target/dist/*/secretspec-operator   # "statically linked" ELF per arch
+```
+
+Build and smoke-test the image with Podman (Docker: replace `podman` by
+`docker`); `TARGETARCH` selects the binary, and the non-host platform runs
+under emulation:
+
+```sh
+podman build --platform linux/amd64 \
+  --build-arg VERSION=0.1.0-dev --build-arg REVISION="$(git rev-parse HEAD)" \
+  -f build/Containerfile -t secretspec-operator:dev .
+podman run --rm --read-only --user 65532:65532 secretspec-operator:dev --help
+```
+
+`.dockerignore` and `.containerignore` are identical (Docker and Podman read
+different names); they send only `target/dist/` to the build.

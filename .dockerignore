@@ -1,0 +1,11 @@
+.git
+.github
+.superpowers
+.cargo
+docs
+charts
+crates
+xtask
+target/*
+!target/dist
+!target/dist/**
