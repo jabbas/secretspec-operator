@@ -357,7 +357,7 @@ The policy and its semantics are **[owner]**. The mechanics are **[architect]**.
   Adoption never rotates on its own: the new SecretSpec has no `nextRotationTime` yet, so a past-due `generated-at` restarts the rotation clock at now (§7.2 row 11).
 
   This is how a credential survives uninstall and reinstall under `Retain`.
-- **Pending GC:** if the Secret still has an ownerReference to a different SecretSpec UID that has been deleted, the operator MUST requeue and wait. It MUST NOT adopt yet.
+- **Pending GC:** if the Secret still has an ownerReference to a different SecretSpec UID that has been deleted, the operator MUST requeue and wait. It MUST NOT adopt yet. This applies only to a controller ownerReference whose `apiVersion` group is `secretspec.jabbas.eu` and whose kind is `SecretSpec`; a controller ownerReference to anything else is a `Conflict` (row 15). **[architect]**
 - **Security note (for the docs):** adoption keys off labels. Anyone who can create Secrets in the namespace could craft one to be adopted. They already have write access to Secrets there, so this is not a privilege escalation.
 - **Docs MUST warn:** with `Delete`, an uninstall/reinstall, a HelmRelease remediation or a GitOps prune produces new values. Examples for credentials that applications persist (e.g. at database init) MUST use `Retain`.
 

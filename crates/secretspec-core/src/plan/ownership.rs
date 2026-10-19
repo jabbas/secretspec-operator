@@ -5,7 +5,7 @@
 use k8s_openapi::api::core::v1::Secret;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference;
 use secretspec_api::constants::{
-    ANNOTATION_SPEC_UID, GROUP, LABEL_MANAGED_BY, LABEL_SPEC_NAME, MANAGED_BY_VALUE,
+    ANNOTATION_SPEC_UID, GROUP, KIND, LABEL_MANAGED_BY, LABEL_SPEC_NAME, MANAGED_BY_VALUE, VERSION,
 };
 use secretspec_api::v1alpha1::{DeletionPolicy, SecretSpec};
 
@@ -21,16 +21,28 @@ pub enum Ownership {
     /// controller and not to this UID (for example a recreated `SecretSpec`,
     /// or a `Retain`-detached Secret): it may be taken over.
     Adoptable,
-    /// The Secret carries our labels but a controller reference points at a
-    /// different UID: wait for garbage collection to remove it.
+    /// The Secret carries our labels but its controller reference points at
+    /// a `SecretSpec` with a different UID: wait for garbage collection to
+    /// remove it.
     WaitForGc,
     /// The Secret is not managed by this `SecretSpec`; the message says so.
     Conflict(String),
 }
 
+/// Whether `reference` points at a `SecretSpec` of our API group (any version).
+fn is_secret_spec(reference: &OwnerReference) -> bool {
+    reference.kind == KIND
+        && reference
+            .api_version
+            .split_once('/')
+            .is_some_and(|(group, _)| group == GROUP)
+}
+
 /// Classifies `secret` against `spec`. Precedence, first match wins:
 /// no Secret → `Absent`; wrong `managed-by` or `spec-name` label → `Conflict`;
-/// a controller reference to another UID → `WaitForGc`; a controller
+/// a controller reference to anything but a `SecretSpec` of
+/// `secretspec.jabbas.eu` → `Conflict`; a controller reference to another
+/// `SecretSpec` UID → `WaitForGc`; a controller
 /// reference to this UID → `Owned`; no controller reference and a matching
 /// `spec-uid` annotation → `Owned`; otherwise `Adoptable`. A spec without a
 /// UID is never `Owned`: matching labels give `Adoptable`.
@@ -53,12 +65,12 @@ pub fn ownership(secret: Option<&Secret>, spec: &SecretSpec) -> Ownership {
             .name
             .as_deref()
             .is_some_and(|name| label(LABEL_SPEC_NAME) == Some(name));
+    let name = meta
+        .name
+        .as_deref()
+        .or(spec.metadata.name.as_deref())
+        .unwrap_or_default();
     if !ours {
-        let name = meta
-            .name
-            .as_deref()
-            .or(spec.metadata.name.as_deref())
-            .unwrap_or_default();
         return Ownership::Conflict(format!(
             "Secret {name} exists and is not managed by this SecretSpec"
         ));
@@ -73,6 +85,10 @@ pub fn ownership(secret: Option<&Secret>, spec: &SecretSpec) -> Ownership {
         .flatten()
         .find(|reference| reference.controller == Some(true));
     match controller {
+        Some(reference) if !is_secret_spec(reference) => Ownership::Conflict(format!(
+            "Secret {name} is controlled by {} {} ({}) and not by a SecretSpec",
+            reference.kind, reference.name, reference.api_version
+        )),
         Some(reference) if reference.uid == spec_uid => Ownership::Owned,
         Some(_) => Ownership::WaitForGc,
         None => {
@@ -102,8 +118,8 @@ pub fn owner_references(spec: &SecretSpec, policy: DeletionPolicy) -> Option<Vec
             let name = spec.metadata.name.clone()?;
             let uid = spec.metadata.uid.clone()?;
             Some(vec![OwnerReference {
-                api_version: format!("{GROUP}/v1alpha1"),
-                kind: "SecretSpec".to_owned(),
+                api_version: format!("{GROUP}/{VERSION}"),
+                kind: KIND.to_owned(),
                 name,
                 uid,
                 controller: Some(true),
@@ -232,6 +248,99 @@ mod tests {
             Some(vec![controller("old", Some(true))]),
         );
         assert_eq!(ownership(Some(&s), &spec(Some("u1"))), Ownership::WaitForGc);
+    }
+
+    fn foreign_controller(api_version: &str, kind: &str, uid: &str) -> OwnerReference {
+        OwnerReference {
+            api_version: api_version.to_owned(),
+            kind: kind.to_owned(),
+            name: "web".to_owned(),
+            uid: uid.to_owned(),
+            controller: Some(true),
+            block_owner_deletion: None,
+        }
+    }
+
+    #[test]
+    fn foreign_controller_conflicts() {
+        for (api_version, kind, uid) in [
+            ("apps/v1", "Deployment", "old"),
+            // Our kind name in another group.
+            ("example.com/v1", "SecretSpec", "old"),
+            // Our group but another kind.
+            ("secretspec.jabbas.eu/v1alpha1", "Other", "old"),
+            // No group at all (core API).
+            ("v1", "SecretSpec", "old"),
+            // A foreign controller cannot be ours even with our UID.
+            ("apps/v1", "Deployment", "u1"),
+        ] {
+            let s = secret(
+                &OURS,
+                &[(ANNOTATION_SPEC_UID, "u1")],
+                Some(vec![foreign_controller(api_version, kind, uid)]),
+            );
+            assert_eq!(
+                ownership(Some(&s), &spec(Some("u1"))),
+                Ownership::Conflict(format!(
+                    "Secret db is controlled by {kind} web ({api_version}) and not by a SecretSpec"
+                )),
+                "{api_version} {kind} {uid}"
+            );
+        }
+    }
+
+    #[test]
+    fn other_version_of_our_kind_waits_for_gc() {
+        let s = secret(
+            &OURS,
+            &[],
+            Some(vec![foreign_controller(
+                "secretspec.jabbas.eu/v1",
+                "SecretSpec",
+                "old",
+            )]),
+        );
+        assert_eq!(ownership(Some(&s), &spec(Some("u1"))), Ownership::WaitForGc);
+    }
+
+    #[test]
+    fn wrong_labels_with_our_controller_ref_conflict() {
+        let owners = Some(vec![controller("u1", Some(true))]);
+        for labels in [
+            &[][..],
+            &[(LABEL_MANAGED_BY, "helm"), (LABEL_SPEC_NAME, "db")][..],
+            &[
+                (LABEL_MANAGED_BY, MANAGED_BY_VALUE),
+                (LABEL_SPEC_NAME, "other"),
+            ][..],
+        ] {
+            let s = secret(labels, &[(ANNOTATION_SPEC_UID, "u1")], owners.clone());
+            assert!(
+                matches!(
+                    ownership(Some(&s), &spec(Some("u1"))),
+                    Ownership::Conflict(_)
+                ),
+                "{labels:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_spec_name_label_conflicts() {
+        let s = secret(
+            &[(LABEL_MANAGED_BY, MANAGED_BY_VALUE)],
+            &[(ANNOTATION_SPEC_UID, "u1")],
+            Some(vec![controller("u1", Some(true))]),
+        );
+        assert!(matches!(
+            ownership(Some(&s), &spec(Some("u1"))),
+            Ownership::Conflict(_)
+        ));
+        let unowned = secret(&[(LABEL_MANAGED_BY, MANAGED_BY_VALUE)], &[], None);
+        assert!(matches!(
+            ownership(Some(&unowned), &spec(Some("u1"))),
+            Ownership::Conflict(_)
+        ));
     }
 
     #[test]

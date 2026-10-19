@@ -10,6 +10,10 @@ use crate::v1alpha1::EcdsaCurve;
 
 /// API group of the `SecretSpec` resource.
 pub const GROUP: &str = "secretspec.jabbas.eu";
+/// API version of the `SecretSpec` resource served by this crate.
+pub const VERSION: &str = "v1alpha1";
+/// Kind of the `SecretSpec` resource.
+pub const KIND: &str = "SecretSpec";
 
 /// Label marking Secrets owned by the operator.
 pub const LABEL_MANAGED_BY: &str = "app.kubernetes.io/managed-by";

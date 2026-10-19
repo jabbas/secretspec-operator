@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use jiff::Timestamp;
 use k8s_openapi::api::core::v1::Secret;
+use k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference;
 use secretspec_api::constants::{
     ANNOTATION_FINGERPRINTS, ANNOTATION_GENERATED_AT, ANNOTATION_KEYS, ANNOTATION_SPEC_UID,
     CONDITION_READY, EVENT_ADOPTED, EVENT_ANCHOR_RESET, EVENT_CONFLICT, EVENT_FINGERPRINTS_RESET,
@@ -758,6 +759,33 @@ fn row_15_foreign_secret_is_a_conflict() {
         "Secret db exists and is not managed by this SecretSpec"
     );
     assert_eq!(plan.requeue_after, None);
+
+    // Our labels, but controlled by something other than a SecretSpec: a
+    // conflict, never a wait for garbage collection.
+    let mut controlled = foreign_secret(
+        &[
+            (LABEL_MANAGED_BY, MANAGED_BY_VALUE),
+            (LABEL_SPEC_NAME, SPEC_NAME),
+        ],
+        &[("password", "hunter2")],
+    );
+    controlled.metadata.owner_references = Some(vec![OwnerReference {
+        api_version: "apps/v1".to_owned(),
+        kind: "Deployment".to_owned(),
+        name: "web".to_owned(),
+        uid: "other".to_owned(),
+        controller: Some(true),
+        block_owner_deletion: None,
+    }]);
+    let p = secretspec_core::plan::plan(&spec, Some(&controlled), now(), &mut seeded_rng(1));
+    assert!(matches!(p.action, SecretAction::Nothing));
+    assert_eq!(p.status.conditions[0].reason, REASON_CONFLICT);
+    assert_eq!(reasons(&p), [EVENT_CONFLICT]);
+    assert_eq!(
+        p.events[0].message,
+        "Secret db is controlled by Deployment web (apps/v1) and not by a SecretSpec"
+    );
+    assert_eq!(p.requeue_after, None);
 }
 
 #[test]
