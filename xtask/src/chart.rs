@@ -219,16 +219,19 @@ impl Helm {
 
     /// `helm template` with `sets`; `Ok(Err(stderr))` when helm rejects them.
     fn template(&self, sets: &[&str]) -> Result<Result<Rendered, String>, BoxError> {
-        let args = Self::with_sets(
-            vec![
-                "template",
-                RELEASE,
-                self.chart_arg()?,
-                "--namespace",
-                NAMESPACE,
-            ],
-            sets,
-        );
+        self.template_with(&Self::with_sets(Vec::new(), sets))
+    }
+
+    /// `helm template` with raw extra arguments (e.g. `--set-string`).
+    fn template_with(&self, extra: &[&str]) -> Result<Result<Rendered, String>, BoxError> {
+        let mut args = vec![
+            "template",
+            RELEASE,
+            self.chart_arg()?,
+            "--namespace",
+            NAMESPACE,
+        ];
+        args.extend_from_slice(extra);
         match self.run(&args)? {
             Ok(stdout) => {
                 let objects = parse_documents(&stdout)
@@ -1092,6 +1095,45 @@ fn chart_version_matches_workspace(ctx: &Ctx) -> Result<(), String> {
     ensure_eq("Chart appVersion", &ctx.app_version.as_str(), &workspace)
 }
 
+/// `resyncInterval` accepted by the schema exactly when the operator accepts
+/// it (`parse_resync_interval`: `<n>s|m|h`, 1m..=24h), checked at the range
+/// boundaries of every unit.
+fn chart_resync_interval_schema(ctx: &Ctx) -> Result<(), String> {
+    const ACCEPTED: &[&str] = &[
+        "60s", "99s", "100s", "9999s", "79999s", "85999s", "86399s", "86400s", "1m", "999m",
+        "1399m", "1439m", "1440m", "1h", "9h", "19h", "24h",
+    ];
+    const REJECTED: &[&str] = &[
+        "0s", "59s", "86401s", "90000s", "100000s", "0m", "1441m", "1500m", "10000m", "0h", "25h",
+        "30h", "100h", "01h", "060s", "1d", "10", "", "m", "1.5h", " 1h", "1h ",
+    ];
+    for value in ACCEPTED {
+        let set = format!("resyncInterval={value}");
+        let rendered = ctx.helm.render(&[set.as_str()])?;
+        ensure_eq(
+            &format!("RESYNC_INTERVAL for {value:?}"),
+            &env_value(&env_map(&rendered.container()?), "RESYNC_INTERVAL")?,
+            &(*value).to_owned(),
+        )?;
+    }
+    for value in REJECTED {
+        // `--set-string` keeps values such as `10` from becoming numbers,
+        // so only the pattern can reject them.
+        let set = format!("resyncInterval={value}");
+        match ctx
+            .helm
+            .template_with(&["--set-string", set.as_str()])
+            .map_err(|e| e.to_string())?
+        {
+            Ok(_) => return Err(format!("resyncInterval={value:?} must be rejected")),
+            Err(stderr) => ensure(stderr.contains("resyncInterval"), || {
+                format!("rejection of {value:?} does not mention resyncInterval:\n{stderr}")
+            })?,
+        }
+    }
+    Ok(())
+}
+
 type Check = fn(&Ctx) -> Result<(), String>;
 
 /// Every check run by `cargo xtask chart-test`.
@@ -1116,6 +1158,7 @@ const CHECKS: &[(&str, Check)] = &[
         chart_rejects_multi_replica_without_leader_election,
     ),
     ("chart_no_latest_tag", chart_no_latest_tag),
+    ("chart_resync_interval_schema", chart_resync_interval_schema),
     (
         "chart_version_matches_workspace",
         chart_version_matches_workspace,
