@@ -1,0 +1,113 @@
+# SPDX-License-Identifier: Apache-2.0
+# Default values for secretspec-operator.
+
+global:
+  # -- Overrides `image.registry` when set (registry mirror / pull-through cache).
+  imageRegistry: ""
+
+image:
+  # -- Image registry; ignored when `global.imageRegistry` is set.
+  registry: ghcr.io
+  # -- Image repository within the registry.
+  repository: jabbas/secretspec-operator
+  # -- Image tag; defaults to `v<chart appVersion>`. `latest` is rejected.
+  tag: ""
+  # -- Image digest (`sha256:...`); when set it is used instead of the tag.
+  digest: ""
+  # -- Image pull policy.
+  pullPolicy: IfNotPresent
+
+# -- Pull secrets passed to the pod unchanged, e.g. `[{name: mirror-pull}]`.
+imagePullSecrets: []
+
+# -- Number of operator replicas. More than one requires leader election.
+replicas: 1
+
+leaderElection:
+  # -- Elect a leader through a Lease in the release namespace.
+  enabled: true
+
+# -- Namespaces to watch. `[]` watches all namespaces (ClusterRole); a list
+# renders a Role per namespace and SecretSpecs elsewhere are ignored.
+watchNamespaces: []
+
+crds:
+  # -- Render the SecretSpec CRD.
+  install: true
+  # -- Keep the CRD (and every SecretSpec) on `helm uninstall`.
+  keep: true
+
+# -- Periodic resync interval (`<n>s|m|h`, 1m to 24h).
+resyncInterval: 1h
+# -- Maximum concurrent reconciles.
+concurrency: 4
+# -- Log filter directive, e.g. `info` or `debug`.
+logLevel: info
+# -- Log format: `json` or `text`.
+logFormat: json
+
+http:
+  # -- Port of the health (`/healthz`, `/readyz`) and metrics (`/metrics`) server.
+  port: 8080
+
+serviceAccount:
+  # -- Create the ServiceAccount.
+  create: true
+  # -- ServiceAccount name; defaults to the release fullname.
+  name: ""
+  # -- ServiceAccount annotations.
+  annotations: {}
+
+# -- Container resources.
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+
+# -- Pod termination grace period in seconds.
+terminationGracePeriodSeconds: 30
+
+# -- Pod security context (PSA `restricted` compliant).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container security context (PSA `restricted` compliant).
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# -- Extra pod annotations.
+podAnnotations: {}
+# -- Extra pod labels.
+podLabels: {}
+# -- Node selector.
+nodeSelector: {}
+# -- Tolerations.
+tolerations: []
+# -- Affinity.
+affinity: {}
+# -- Priority class name.
+priorityClassName: ""
+
+metrics:
+  service:
+    # -- Expose the HTTP port (named `http`) through a ClusterIP Service.
+    enabled: true
+
+serviceMonitor:
+  # -- Render a Prometheus Operator ServiceMonitor (needs `metrics.service.enabled`).
+  enabled: false
+  # -- Scrape interval.
+  interval: 30s
+  # -- Extra ServiceMonitor labels, e.g. for a Prometheus selector.
+  labels: {}

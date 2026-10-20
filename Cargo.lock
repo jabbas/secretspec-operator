@@ -3494,6 +3494,7 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "secretspec-api",
+ "serde",
  "serde_norway",
 ]
 

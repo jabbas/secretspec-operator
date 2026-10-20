@@ -2,6 +2,8 @@
 
 //! Developer automation for the workspace. Run via `cargo xtask`.
 
+mod chart;
+
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
@@ -184,9 +186,11 @@ fn run() -> Result<ExitCode, BoxError> {
                 Ok(ExitCode::from(2))
             }
         },
+        ["chart-test"] => chart::chart_test(),
         _ => {
             eprintln!("usage: cargo xtask crdgen [--check]");
             eprintln!("       cargo xtask dist --target <triple> [--release]");
+            eprintln!("       cargo xtask chart-test");
             Ok(ExitCode::from(2))
         }
     }
