@@ -108,6 +108,33 @@ fn valid_fixtures_all_resolve() {
     }
 }
 
+/// The copy-paste examples are valid like the valid fixtures: known keys only
+/// (checked by the loader), they resolve, and each one documents itself.
+#[test]
+fn examples_all_resolve() {
+    let examples = common::load_examples();
+    assert_eq!(examples.len(), 7, "expected the 7 documented examples");
+    for example in examples {
+        let text = std::fs::read_to_string(common::examples_dir().join(&example.file))
+            .expect("read example");
+        assert!(
+            text.starts_with("# SPDX-License-Identifier: Apache-2.0\n#\n# "),
+            "{}: must start with the SPDX line and a header comment",
+            example.file
+        );
+        assert!(
+            example.value["metadata"].get("namespace").is_none(),
+            "{}: examples are applied with -n and carry no namespace",
+            example.file
+        );
+        let obj: SecretSpec = serde_json::from_value(example.value).expect("deserializes");
+        let name = obj.metadata.name.as_deref().expect("example has a name");
+        if let Err(e) = resolve(&obj.spec, name, "example") {
+            panic!("{}: {e}", example.file);
+        }
+    }
+}
+
 #[test]
 fn minimal_field_resolves_to_frozen_defaults() {
     let resolved = resolve_valid("v01");

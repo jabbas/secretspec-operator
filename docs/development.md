@@ -33,6 +33,7 @@ which layer rejects them (`# layer: cel|schema`, see `tests/common/mod.rs`).
 | Real API server (CRD acceptance, CEL cost, schema, defaulting, immutability) | see below | a cluster |
 | Operator unit tests (config, foreign-key view, outcome, leader logic, metrics) | `cargo test -p secretspec-operator` | nothing |
 | Operator against a real API server (reconcile, RBAC, leader election) | see [Operator integration tests](#operator-integration-tests-on-kind) | a cluster |
+| Helm chart + image, end to end (examples, upgrade, uninstall, namespace mode) | see [End-to-end tests](#end-to-end-tests-chart--image-on-kind) | a cluster and the image |
 
 `cargo test --workspace` runs the cluster-free layers; both cluster suites are `#[ignore]`d.
 Where the client-side tests and a real API server disagree, the server wins and
@@ -212,3 +213,40 @@ podman run --rm --read-only --user 65532:65532 secretspec-operator:dev --help
 
 `.dockerignore` and `.containerignore` are identical (Docker and Podman read
 different names); they send only `target/dist/` to the build.
+
+## End-to-end tests (chart + image) on kind
+
+`crates/secretspec-operator/tests/e2e.rs` installs the Helm chart from the
+working tree with the image built above, into namespace `secretspec-system`
+(PSA `restricted`), and exercises it as a user would: every `examples/*.yaml`
+in a PSA-`restricted` namespace, `helm upgrade` and pod restart (values and
+Secret `resourceVersion`s unchanged), `helm uninstall` (CRD, SecretSpecs and
+Secrets stay), `watchNamespaces` mode (no 403s), and log redaction.
+
+The harness needs `helm` (or `$HELM`) on the `PATH`, a **disposable, fresh**
+cluster (the chart owns the CRD, so a cluster where the server or integration
+suite already applied the CRD fails with "invalid ownership metadata" —
+`kubectl delete crd secretspecs.secretspec.jabbas.eu` first), and the image
+loaded into it:
+
+```sh
+cargo xtask dist --target x86_64-unknown-linux-musl --release
+podman build --platform linux/amd64 -f build/Containerfile \
+  -t localhost/secretspec-operator:e2e .
+podman save -o "$TMPDIR/image.tar" localhost/secretspec-operator:e2e
+
+kind create cluster --name secretspec-e2e-134 \
+  --image kindest/node:v1.34.11@sha256:44e222ee2132dab25ff87301682f89eb82c7880ea3a1bf543bfe9708fd08d67d \
+  --kubeconfig "$TMPDIR/secretspec-e2e-134.kubeconfig"
+kind load image-archive "$TMPDIR/image.tar" --name secretspec-e2e-134
+SECRETSPEC_E2E_KUBECONFIG="$TMPDIR/secretspec-e2e-134.kubeconfig" \
+SECRETSPEC_E2E_IMAGE=localhost/secretspec-operator:e2e \
+  cargo test -p secretspec-operator --test e2e -- --ignored --test-threads=1
+kind delete cluster --name secretspec-e2e-134
+```
+
+(Docker: `docker build … --load` and `kind load docker-image`.) The image is
+`<registry>/<repository>:<tag>`; the chart gets `image.pullPolicy=Never`.
+The suite takes about 80 s once the cluster is up; run it on 1.37 too (node
+image as in the server-side section). `--test-threads=1` is required: the
+tests share one release.

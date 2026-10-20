@@ -188,6 +188,23 @@ async fn valid_fixtures_accepted() {
 
 #[tokio::test]
 #[ignore = "needs a cluster: set SECRETSPEC_TEST_KUBECONFIG"]
+async fn examples_accepted() {
+    with_namespace(|client, ns| async move {
+        let api = api_for(&client, &ns);
+        let mut failures = String::new();
+        for example in common::load_examples() {
+            let obj = manifest_in(&ns, example.value);
+            if let Err(e) = api.create(&dry_run(), &obj).await {
+                let _ = writeln!(failures, "examples/{}: rejected: {e}", example.file);
+            }
+        }
+        assert!(failures.is_empty(), "examples rejected:\n{failures}");
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "needs a cluster: set SECRETSPEC_TEST_KUBECONFIG"]
 async fn invalid_fixtures_rejected() {
     with_namespace(|client, ns| async move {
         let api = api_for(&client, &ns);

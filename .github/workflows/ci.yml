@@ -121,6 +121,63 @@ jobs:
           SECRETSPEC_TEST_KUBECONFIG: ${{ runner.temp }}/kubeconfig
         run: cargo test -p secretspec-operator --test integration -- --ignored --test-threads=1
 
+  # Installs the Helm chart from the working tree with the image built from
+  # build/Containerfile (static musl binary, loaded into kind) and runs the
+  # end-to-end tests: examples, upgrade/restart, uninstall, namespace mode,
+  # log redaction. Same kind release and node images as server-validation.
+  e2e:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kubernetes: "1.34"
+            node_image: kindest/node:v1.34.11@sha256:44e222ee2132dab25ff87301682f89eb82c7880ea3a1bf543bfe9708fd08d67d
+          - kubernetes: "1.37"
+            node_image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+    name: e2e (Kubernetes ${{ matrix.kubernetes }})
+    env:
+      SECRETSPEC_E2E_IMAGE: localhost/secretspec-operator:e2e
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          target: x86_64-unknown-linux-musl
+      # Same toolchain as docs/development.md ("Building the image").
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-zigbuild@0.23.4
+      - name: Install zig
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zig-venv"
+          "$RUNNER_TEMP/zig-venv/bin/pip" install ziglang==0.17.0
+          echo "$RUNNER_TEMP/zig-venv/bin" >> "$GITHUB_PATH"
+      - name: Build the static binary
+        run: cargo xtask dist --target x86_64-unknown-linux-musl --release
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build the image
+        run: |
+          docker buildx build --load --platform linux/amd64 \
+            --build-arg VERSION=0.0.0-e2e --build-arg REVISION="$GITHUB_SHA" \
+            -f build/Containerfile -t "$SECRETSPEC_E2E_IMAGE" .
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.22.1
+      - uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
+        with:
+          version: v0.33.0
+          cluster_name: secretspec-e2e-${{ matrix.kubernetes }}
+          node_image: ${{ matrix.node_image }}
+          wait: 120s
+      - name: Load the image into kind
+        run: kind load docker-image "$SECRETSPEC_E2E_IMAGE" --name "secretspec-e2e-${{ matrix.kubernetes }}"
+      - name: Export kubeconfig
+        run: kind get kubeconfig --name "secretspec-e2e-${{ matrix.kubernetes }}" > "$RUNNER_TEMP/kubeconfig"
+      - name: End-to-end tests
+        env:
+          SECRETSPEC_E2E_KUBECONFIG: ${{ runner.temp }}/kubeconfig
+        run: cargo test -p secretspec-operator --test e2e -- --ignored --test-threads=1
+
   deny:
     runs-on: ubuntu-24.04
     steps:

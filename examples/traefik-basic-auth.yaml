@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# HTTP basic auth for Traefik's BasicAuth middleware.
+#
+# Use this to protect an IngressRoute with a generated password. Traefik reads
+# htpasswd lines from the Secret key `users`, so `keys.htpasswd` is set to
+# `users` (the default is `auth`). The line is `admin:<bcrypt hash>`; the
+# plain password is kept under `password` for the people who log in.
+#
+# Apply with: kubectl apply -n <namespace> -f traefik-basic-auth.yaml
+# Reference it from a Middleware in the same namespace:
+#
+#   apiVersion: traefik.io/v1alpha1
+#   kind: Middleware
+#   metadata:
+#     name: dashboard-auth
+#   spec:
+#     basicAuth:
+#       secret: dashboard-auth
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: dashboard-auth
+spec:
+  basicAuth:
+    username: admin
+    password:
+      length: 32
+    keys:
+      htpasswd: users

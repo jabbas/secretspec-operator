@@ -109,10 +109,28 @@ pub fn unknown_keys(manifest: &serde_json::Value) -> Vec<String> {
 /// Panics (test failure) on unreadable directories, unparsable YAML, or an
 /// unknown `# layer:` value.
 pub fn load(dir: &str) -> Vec<Fixture> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(dir);
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&path)
+    load_from(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(dir),
+    )
+}
+
+/// The repository's top-level `examples/` directory.
+pub fn examples_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples")
+}
+
+/// Loads every copy-paste example in `examples/` like a valid fixture. The
+/// examples carry no `metadata.namespace` (users apply them with `-n`).
+pub fn load_examples() -> Vec<Fixture> {
+    let examples = load_from(&examples_dir());
+    assert!(!examples.is_empty(), "no examples found");
+    examples
+}
+
+fn load_from(path: &std::path::Path) -> Vec<Fixture> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(path)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()))
         .map(|entry| entry.expect("dir entry").path())
         .filter(|p| p.extension().is_some_and(|ext| ext == "yaml"))
