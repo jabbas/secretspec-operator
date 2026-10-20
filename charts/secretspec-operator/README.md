@@ -34,6 +34,22 @@ Uninstall with `helm uninstall`; with `crds.keep: true` (the default) the
 CRD and every SecretSpec stay in the cluster. Deleting the CRD deletes every
 SecretSpec.
 
+For high availability install with `--set replicas=2`: the replicas elect a
+leader through a Lease, and the non-leader reports Ready while it stands by (so
+a PodDisruptionBudget does not protect the leader specifically).
+
+## One release owns the CRD
+
+The CRD is cluster-wide, so exactly one release may own it. A second install of
+this chart in the same cluster (for example another namespace-mode release)
+must set `--set crds.install=false`. Helm also refuses a CRD that was applied
+without Helm (`kubectl apply`): adopt it by labelling it
+`app.kubernetes.io/managed-by=Helm` and annotating it with
+`meta.helm.sh/release-name` and `meta.helm.sh/release-namespace`, or use
+`crds.install=false`. With Helm 4, a field conflict on `helm upgrade` is
+resolved with `--force-conflicts`. Details and commands:
+[docs/installation.md](https://github.com/jabbas/secretspec-operator/blob/main/docs/installation.md#crd-lifecycle).
+
 ## Scope and RBAC
 
 | `watchNamespaces` | RBAC |
@@ -102,3 +118,9 @@ chart versions do not). `latest` is rejected.
 
 `values.schema.json` validates types and enums; `helm install` rejects
 invalid values before anything is applied.
+
+## Documentation
+
+Installation (including signature verification with `cosign verify`), the API
+reference, operations and security are documented in the
+[repository](https://github.com/jabbas/secretspec-operator#documentation).
