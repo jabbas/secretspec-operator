@@ -472,6 +472,85 @@ fn assert_unchanged(before: &Snapshot, after: &Snapshot, what: &str) {
     }
 }
 
+// --- CRD ------------------------------------------------------------------------------
+
+/// The description of the CRD's root schema in the generated file that the
+/// chart ships (`cargo xtask crdgen`).
+fn chart_crd_description() -> String {
+    let path = workspace_path(
+        "charts/secretspec-operator/files/crd/secretspecs.secretspec.jabbas.eu.yaml",
+    );
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    let crd: Value = serde_norway::from_str(&text).expect("generated CRD is valid YAML");
+    crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["description"]
+        .as_str()
+        .expect("generated CRD has a root schema description")
+        .to_owned()
+}
+
+/// The root schema description of the served version of the live CRD.
+fn live_crd_description(crd: &mut CustomResourceDefinition) -> &mut Option<String> {
+    &mut crd.spec.versions[0]
+        .schema
+        .as_mut()
+        .expect("CRD schema")
+        .open_api_v3_schema
+        .as_mut()
+        .expect("CRD openAPIV3Schema")
+        .description
+}
+
+/// Makes the live CRD differ from what the chart renders (a harmless change
+/// to the schema's description), as if an older chart version had installed it.
+async fn drift_crd(client: &Client) {
+    let crds: Api<CustomResourceDefinition> = Api::all(client.clone());
+    let mut crd = crds.get(CRD_NAME).await.expect("get CRD");
+    *live_crd_description(&mut crd) = Some("drifted by the e2e suite".to_owned());
+    // Helm 4 applies server-side as manager "helm" and would report a field
+    // conflict with any other manager; drifting as "helm" models an older
+    // chart version and is irrelevant for helm 3's client-side patch.
+    crd.metadata = ObjectMeta {
+        name: crd.metadata.name.take(),
+        labels: crd.metadata.labels.take(),
+        annotations: crd.metadata.annotations.take(),
+        ..ObjectMeta::default()
+    };
+    crd.status = None;
+    crds.patch(
+        CRD_NAME,
+        &PatchParams::apply("helm").force(),
+        &Patch::Apply(&crd),
+    )
+    .await
+    .expect("drift CRD");
+    let mut drifted = crds.get(CRD_NAME).await.expect("get CRD");
+    assert_ne!(
+        live_crd_description(&mut drifted).clone(),
+        Some(chart_crd_description()),
+        "the CRD did not drift"
+    );
+}
+
+/// Asserts that helm brought the live CRD back to the chart's: the schema is
+/// the generated one again, and `crds.keep` still protects it from uninstall.
+async fn assert_crd_matches_chart(client: &Client, what: &str) {
+    let crds: Api<CustomResourceDefinition> = Api::all(client.clone());
+    let mut crd = crds.get(CRD_NAME).await.expect("get CRD");
+    assert_eq!(
+        live_crd_description(&mut crd).clone(),
+        Some(chart_crd_description()),
+        "{what}: the CRD was not updated to the chart's"
+    );
+    assert_eq!(
+        crd.annotations()
+            .get("helm.sh/resource-policy")
+            .map(String::as_str),
+        Some("keep"),
+        "{what}: the CRD lost its keep annotation"
+    );
+}
+
 fn keys(secret: &Secret) -> Vec<&str> {
     secret
         .data
@@ -633,7 +712,10 @@ async fn e2e_upgrade_and_restart_keep_values() {
         wait_all_ready(&client, ns, &names).await;
         let before = snapshot(&client, ns, &names).await;
 
+        // `helm upgrade` must also update the CRD (it is a template, not crds/).
+        drift_crd(&client).await;
         let upgraded = install(&client, &["logLevel=debug", "resyncInterval=30m"]).await;
+        assert_crd_matches_chart(&client, "helm upgrade").await;
         assert_ne!(
             upgraded.uid(),
             before_pod.uid(),
@@ -716,7 +798,10 @@ async fn e2e_uninstall_keeps_crd() {
             "helm uninstall",
         );
 
+        // The kept CRD is adopted by the reinstall and brought up to date.
+        drift_crd(&client).await;
         let pod = install(&client, &[]).await;
+        assert_crd_matches_chart(&client, "reinstall").await;
         wait_reconciled_by(&client, &pod, ns, &names).await;
         wait_all_ready(&client, ns, &names).await;
         assert_unchanged(&before, &snapshot(&client, ns, &names).await, "reinstall");
@@ -763,9 +848,17 @@ async fn e2e_namespace_mode() {
             "Secret generated outside watchNamespaces"
         );
 
+        // A bare "403" would match timestamps, UIDs and the random namespace
+        // ids. The operator renders API errors as "<code> <reason>"
+        // (`kube_error_summary`: "403 Forbidden"); the server's own messages
+        // say "... is forbidden: ...".
         let logs = pod_logs(&client, &pod).await;
-        for needle in ["403", "Forbidden"] {
-            assert!(!logs.contains(needle), "operator logged {needle}:\n{logs}");
+        let lowered = logs.to_ascii_lowercase();
+        for needle in ["403 forbidden", "forbidden"] {
+            assert!(
+                !lowered.contains(needle),
+                "operator logged {needle:?}:\n{logs}"
+            );
         }
     })
     .await;
