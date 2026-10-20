@@ -53,7 +53,7 @@ First release.
   `linux/arm64`, a static binary on a distroless image. Version tags only, no
   `latest`.
 - **Release signing:** cosign keyless signatures for the image and the chart
-  and an SPDX SBOM attestation.
+  and a signed SPDX SBOM attestation per platform image.
 - **Documentation and seven examples.**
 
 ### Compatibility

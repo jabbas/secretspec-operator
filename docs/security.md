@@ -168,24 +168,41 @@ executed. The rationale is recorded next to the ignore in `.cargo/audit.toml` an
 Every release (`vX.Y.Z` and `vX.Y.Z-rc.N`) is built by the GitHub Actions
 workflow `.github/workflows/release.yml`, which:
 
-- builds the multi-arch image (`linux/amd64`, `linux/arm64`) and the chart;
-- scans the image for vulnerabilities;
-- signs the image and the chart with **cosign keyless signing** — there is no
-  long-lived key; the signing certificate is issued to the workflow run through
-  GitHub OIDC and recorded in the public Sigstore transparency log;
-- attaches an **SBOM** (SPDX JSON) to the image as a signed attestation.
+- runs the full test and audit gate on the tagged commit, which must be on `main`
+  and match the workspace version;
+- builds the static binaries and the multi-arch image (`linux/amd64`,
+  `linux/arm64`) and packages the chart;
+- scans the pushed image with [grype](https://github.com/anchore/grype) and
+  fails the release on any **fixable** vulnerability of severity high or
+  critical (vulnerabilities for which no fixed version exists yet are ignored,
+  so a release is not blocked by something nobody can fix);
+- signs the image (the multi-arch index and each platform image) and the chart
+  with **cosign keyless signing** — there is no long-lived key; the signing
+  certificate is issued to the workflow run through GitHub OIDC and recorded in
+  the public Sigstore transparency log;
+- generates an **SBOM** (SPDX JSON, with [syft](https://github.com/anchore/syft))
+  of each platform image and attaches it to that platform image as a signed
+  attestation;
+- starts the pushed image on both architectures (`--help`) before the chart and
+  the GitHub Release are published.
 
-A valid signature therefore proves that the artifact was produced by that
-workflow of the `jabbas/secretspec-operator` repository for exactly that tag.
-The identity to check is:
+The GitHub Release carries the chart package, the two SBOMs
+(`secretspec-operator-<tag>-linux-amd64.spdx.json` and `…-linux-arm64.spdx.json`)
+and a `SHA256SUMS` file. The SBOM files there are copies; the signed
+attestations in the registry are the authoritative ones, and `SHA256SUMS`
+protects only the download, it is not signed itself.
+
+A valid signature proves that the artifact was produced by that workflow of the
+`jabbas/secretspec-operator` repository for exactly that tag. The identity to
+check is:
 
 | Property | Value |
 |---|---|
 | Certificate identity | `https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/<tag>` |
 | OIDC issuer | `https://token.actions.githubusercontent.com` |
 
-Set the variables for the release you are installing (`<tag>` is `v0.1.0`,
-`v0.1.0-rc.1`, …; the chart version is the tag without the `v`):
+Set the variables for the release you are installing (`<tag>` is `v0.1.0`, `v0.1.0-rc.1`, …; the chart
+version is the tag without the `v`):
 
 ```sh
 TAG=v0.1.0
@@ -194,7 +211,7 @@ IDENTITY="https://github.com/jabbas/secretspec-operator/.github/workflows/releas
 ISSUER="https://token.actions.githubusercontent.com"
 ```
 
-Verify the image:
+Verify the image (the tag resolves to the multi-arch index, which is signed):
 
 ```sh
 cosign verify "ghcr.io/jabbas/secretspec-operator:${TAG}" \
@@ -210,20 +227,29 @@ cosign verify "ghcr.io/jabbas/charts/secretspec-operator:${CHART_VERSION}" \
   --certificate-oidc-issuer "${ISSUER}"
 ```
 
-Verify the SBOM attestation of the image:
+The SBOM attestation is attached to each **platform** image, not to the
+multi-arch index, because an SBOM describes the contents of one platform. Look up
+the digest of the platform you run (`amd64` or `arm64`) in the index, then verify
+the attestation of that digest:
 
 ```sh
-cosign verify-attestation "ghcr.io/jabbas/secretspec-operator:${TAG}" \
+ARCH=amd64   # or arm64
+PLATFORM_DIGEST="$(docker buildx imagetools inspect "ghcr.io/jabbas/secretspec-operator:${TAG}" --raw \
+  | jq -r --arg arch "${ARCH}" '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest')"
+
+cosign verify-attestation "ghcr.io/jabbas/secretspec-operator@${PLATFORM_DIGEST}" \
   --type spdxjson \
   --certificate-identity "${IDENTITY}" \
   --certificate-oidc-issuer "${ISSUER}"
 ```
 
-The attestation output is a stream of signed envelopes whose `payload` is the
-base64-encoded SBOM statement; to read the SBOM itself:
+(`crane manifest "ghcr.io/jabbas/secretspec-operator:${TAG}"` prints the same
+index if you do not have Docker.) The attestation output is a stream of signed
+envelopes whose `payload` is the base64-encoded in-toto statement; to read the
+SBOM itself:
 
 ```sh
-cosign verify-attestation "ghcr.io/jabbas/secretspec-operator:${TAG}" \
+cosign verify-attestation "ghcr.io/jabbas/secretspec-operator@${PLATFORM_DIGEST}" \
   --type spdxjson \
   --certificate-identity "${IDENTITY}" \
   --certificate-oidc-issuer "${ISSUER}" \
@@ -231,7 +257,8 @@ cosign verify-attestation "ghcr.io/jabbas/secretspec-operator:${TAG}" \
 ```
 
 Tags are mutable in principle. For the strongest guarantee, take the digest
-printed by `cosign verify` and install with `image.digest`
+printed by `cosign verify` (`critical.image.docker-manifest-digest`, the index
+digest) and install with `image.digest`
 ([Installation](installation.md#registry-mirror-pull-secrets-and-digest-pinning)).
 Only version tags are published; there is no `latest`.
 

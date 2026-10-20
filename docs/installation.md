@@ -59,18 +59,24 @@ cosign verify "ghcr.io/jabbas/charts/secretspec-operator:${CHART_VERSION}" \
   --certificate-oidc-issuer "${ISSUER}"
 ```
 
-Verify the SBOM attestation of the image (SPDX JSON):
+Verify the SBOM attestation (SPDX JSON). It is attached to each platform image
+rather than to the multi-arch index, so first look up the digest of your
+platform (`amd64` or `arm64`) in the index:
 
 ```sh
-cosign verify-attestation "ghcr.io/jabbas/secretspec-operator:${TAG}" \
+ARCH=amd64   # or arm64
+PLATFORM_DIGEST="$(docker buildx imagetools inspect "ghcr.io/jabbas/secretspec-operator:${TAG}" --raw \
+  | jq -r --arg arch "${ARCH}" '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest')"
+
+cosign verify-attestation "ghcr.io/jabbas/secretspec-operator@${PLATFORM_DIGEST}" \
   --type spdxjson \
   --certificate-identity "${IDENTITY}" \
   --certificate-oidc-issuer "${ISSUER}"
 ```
 
 A failed verification prints an error and exits non-zero; do not install. The
-output of a successful `cosign verify` contains the image digest
-(`critical.image.docker-manifest-digest`), which you can pin with
+output of a successful `cosign verify` contains the digest of the multi-arch
+image (`critical.image.docker-manifest-digest`), which you can pin with
 `image.digest` (see [Digest pinning](#registry-mirror-pull-secrets-and-digest-pinning)).
 More background is in [Security](security.md#release-signing-and-sbom).
 

@@ -250,3 +250,92 @@ kind delete cluster --name secretspec-e2e-134
 The suite takes about 80 s once the cluster is up; run it on 1.37 too (node
 image as in the server-side section). `--test-threads=1` is required: the
 tests share one release.
+
+## Releasing
+
+A release is a pushed annotated tag on `main`: `vX.Y.Z` or `vX.Y.Z-rc.N`.
+`.github/workflows/release.yml` does everything else; nothing is published by
+hand. The image is `ghcr.io/jabbas/secretspec-operator:<tag>` (with the `v`), the
+chart is `oci://ghcr.io/jabbas/charts/secretspec-operator` at the tag without the
+`v`. No `latest` tag exists.
+
+### Bump the versions
+
+Three places carry the release version and must be equal; `cargo xtask
+chart-test` (test `chart_version_matches_workspace`) and the workflow's `verify`
+job fail otherwise:
+
+1. `version` in `[workspace.package]` of `Cargo.toml` (then `cargo build` so
+   `Cargo.lock` follows);
+2. `version` in `charts/secretspec-operator/Chart.yaml`;
+3. `appVersion` in `charts/secretspec-operator/Chart.yaml` (a quoted string).
+
+Also replace "Unreleased" in the `CHANGELOG.md` heading of the new version with
+the release date (for the final release). Do this in a pull request and merge it
+to `main`.
+
+**Release candidates do not change any of these files.** The committed versions
+are the *final* version (`0.1.0`); the tag `v0.1.0-rc.1` is checked against it
+(the part before `-rc.N` must equal the workspace version), and the workflow
+injects the rc version only while packaging the chart
+(`helm package --version 0.1.0-rc.1 --app-version 0.1.0-rc.1`), so the packaged
+chart installs the image `…:v0.1.0-rc.1`.
+
+### Tag
+
+Tag a commit that is on `main` and has passed CI. Tags are annotated, and a
+pushed tag is **never moved or deleted**: a signed artifact for it may already
+exist.
+
+```sh
+git switch main && git pull --ff-only
+git tag -a v0.1.0-rc.1 -m "v0.1.0-rc.1"      # release candidate
+git push origin v0.1.0-rc.1
+# after the candidate has been tried out:
+git tag -a v0.1.0 -m "v0.1.0"                # final release
+git push origin v0.1.0
+```
+
+If a release run fails because of a transient problem (registry, runner),
+re-run the failed jobs of that workflow run. If it fails because of the code or
+the workflow, fix it on `main` and cut the next candidate (`-rc.2`) or patch
+version; do not re-tag.
+
+### What the workflow does
+
+| Job | Does |
+|---|---|
+| `verify` | Checks the tag format, that its version matches the workspace version (and the chart files), and that the commit is reachable from `main`; then runs the full gate: `fmt`, `clippy -D warnings`, tests including the ignored RSA tests in release mode, `crdgen --check`, `chart-test`, `cargo deny`, `cargo audit`. |
+| `build` | Static musl binaries for amd64 and arm64 (`cargo xtask dist`, cargo-zigbuild), uploaded as an artifact. |
+| `image` | Builds and pushes the multi-arch image (tag only), scans each platform image with grype (fails on a fixable high or critical finding), creates an SPDX SBOM per platform with syft, signs the index and the platform images with cosign, attests the SBOMs on the platform images, and verifies it all with the documented commands. |
+| `smoke` | Runs the pushed image with `--help` on amd64 and on arm64 (QEMU). |
+| `chart` | Packages the chart at the release version, checks that it renders the image `ghcr.io/jabbas/secretspec-operator:<tag>`, pushes it, signs it and verifies the signature. |
+| `release` | Creates the GitHub Release (pre-release for `-rc.N`) with generated notes, the chart package, the SBOMs and `SHA256SUMS`. |
+
+Write permissions are granted per job: only `image` and `chart` can push packages
+and obtain an OIDC token for signing, only `release` can write repository
+contents.
+
+### Verify a release
+
+Follow [Security: Release signing and SBOM](security.md#release-signing-and-sbom)
+(`cosign verify` for the image and the chart, `cosign verify-attestation` for the
+SBOM of a platform image). Also check that the packages are public
+(`docker pull ghcr.io/jabbas/secretspec-operator:<tag>` and `helm pull
+oci://ghcr.io/jabbas/charts/secretspec-operator --version <version>` work
+without logging in) and that a pre-release is marked as such.
+
+### One-time setup and maintenance
+
+- **Package visibility.** After the first release, the `secretspec-operator`
+  container package and the `charts/secretspec-operator` package on ghcr.io must
+  be public and linked to this repository (package settings). Without that,
+  users cannot pull or verify them anonymously.
+- **Protect tags.** A repository ruleset for `v*` tags that blocks deletion and
+  updates enforces the "never move a tag" rule.
+- **Scanner and cosign versions** are pinned in the `env:` block of
+  `release.yml`. The syft and grype archives are verified against a SHA-256 that
+  is pinned next to the version; when bumping one, take the checksum of the
+  `linux_amd64.tar.gz` from the `*_checksums.txt` of that upstream release and
+  change both. cosign is installed by the SHA-pinned `sigstore/cosign-installer`,
+  which verifies the download itself. Renovate does not touch these pins.
