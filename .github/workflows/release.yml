@@ -162,9 +162,13 @@ jobs:
           name: dist
           path: target/dist
           if-no-files-found: error
+          overwrite: true
           retention-days: 7
 
-  # Multi-arch image: push, scan, SBOM, sign, attest, verify.
+  # Multi-arch image: push by digest, scan, SBOM, sign, attest, then tag and
+  # verify. The tag is set last and only if it is free or already points at the
+  # same digest, so no re-run can move it: a re-run that finds the tag resumes
+  # with the digest it points to instead of building a new image.
   image:
     needs: [verify, build]
     runs-on: ubuntu-24.04
@@ -177,7 +181,7 @@ jobs:
       TAG: ${{ github.ref_name }}
       VERSION: ${{ needs.verify.outputs.version }}
     outputs:
-      digest: ${{ steps.build.outputs.digest }}
+      digest: ${{ steps.index.outputs.digest }}
       digest_amd64: ${{ steps.platforms.outputs.amd64 }}
       digest_arm64: ${{ steps.platforms.outputs.arm64 }}
     steps:
@@ -218,16 +222,45 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - name: Build and push the multi-arch image
+      # Resume: when the tag already exists (an earlier attempt got as far as
+      # tagging), its digest is used and nothing is rebuilt. The build is not
+      # reproducible, so a rebuild would produce a different digest.
+      - name: Look for an already published tag
+        id: existing
+        run: |
+          # Prints the digest the reference points to, nothing when it does not
+          # exist, and fails on any other error. Access errors count as "does
+          # not exist": this job holds a write token, so it could read a tag
+          # that exists, and it could not push either way.
+          tag_digest() {
+            local out err
+            err="$(mktemp)"
+            if out="$(docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' 2> "$err")"; then
+              jq -er '.digest' <<< "$out"
+            elif grep -qiE 'not found|manifest unknown|name unknown|404|denied|unauthorized' "$err"; then
+              :
+            else
+              cat "$err" >&2
+              return 1
+            fi
+          }
+          digest="$(tag_digest "$IMAGE:$TAG")"
+          if [[ -n "$digest" ]]; then
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            echo "::notice::$IMAGE:$TAG already exists ($digest); resuming with it, nothing is rebuilt"
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      # Pushed by digest, without any tag: the tag is set only after the image
+      # has been scanned, signed and attested (see "Tag the image").
+      - name: Build and push the multi-arch image (by digest)
         id: build
+        if: steps.existing.outputs.digest == ''
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: build/Containerfile
           platforms: linux/amd64,linux/arm64
-          push: true
-          # The release tag only; never `latest`.
-          tags: ${{ env.IMAGE }}:${{ github.ref_name }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
             VERSION=${{ needs.verify.outputs.version }}
             REVISION=${{ github.sha }}
@@ -235,10 +268,19 @@ jobs:
           # SBOM attestation are done below with cosign.
           provenance: false
           sbom: false
+      - name: Select the index digest
+        id: index
+        env:
+          EXISTING_DIGEST: ${{ steps.existing.outputs.digest }}
+          BUILT_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          digest="${EXISTING_DIGEST:-$BUILT_DIGEST}"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Resolve the per-platform digests
         id: platforms
         env:
-          INDEX_DIGEST: ${{ steps.build.outputs.digest }}
+          INDEX_DIGEST: ${{ steps.index.outputs.digest }}
         run: |
           [[ "$INDEX_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           docker buildx imagetools inspect "$IMAGE@$INDEX_DIGEST" --raw > index.json
@@ -276,7 +318,7 @@ jobs:
       # one platform's contents.
       - name: Sign the image
         env:
-          INDEX_DIGEST: ${{ steps.build.outputs.digest }}
+          INDEX_DIGEST: ${{ steps.index.outputs.digest }}
           DIGEST_AMD64: ${{ steps.platforms.outputs.amd64 }}
           DIGEST_ARM64: ${{ steps.platforms.outputs.arm64 }}
         run: |
@@ -291,16 +333,43 @@ jobs:
             --predicate "sbom/secretspec-operator-${TAG}-linux-amd64.spdx.json" "$IMAGE@$DIGEST_AMD64"
           cosign attest --yes --type spdxjson \
             --predicate "sbom/secretspec-operator-${TAG}-linux-arm64.spdx.json" "$IMAGE@$DIGEST_ARM64"
+      # The only step that creates the tag. It refuses to touch a tag that
+      # points anywhere else.
+      - name: Tag the image
+        env:
+          INDEX_DIGEST: ${{ steps.index.outputs.digest }}
+        run: |
+          tag_digest() {
+            local out err
+            err="$(mktemp)"
+            if out="$(docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' 2> "$err")"; then
+              jq -er '.digest' <<< "$out"
+            elif grep -qiE 'not found|manifest unknown|name unknown|404|denied|unauthorized' "$err"; then
+              :
+            else
+              cat "$err" >&2
+              return 1
+            fi
+          }
+          current="$(tag_digest "$IMAGE:$TAG")"
+          if [[ -z "$current" ]]; then
+            docker buildx imagetools create --tag "$IMAGE:$TAG" "$IMAGE@$INDEX_DIGEST"
+            current="$(tag_digest "$IMAGE:$TAG")"
+          fi
+          if [[ "$current" != "$INDEX_DIGEST" ]]; then
+            echo "::error::$IMAGE:$TAG points to '$current', not to $INDEX_DIGEST; a pushed tag is never moved. Cut the next release candidate."
+            exit 1
+          fi
       # The commands documented in docs/installation.md and docs/security.md.
       - name: Verify what was published
         env:
-          INDEX_DIGEST: ${{ steps.build.outputs.digest }}
+          INDEX_DIGEST: ${{ steps.index.outputs.digest }}
           DIGEST_AMD64: ${{ steps.platforms.outputs.amd64 }}
           DIGEST_ARM64: ${{ steps.platforms.outputs.arm64 }}
         run: |
           identity="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${TAG}"
 
-          # By tag, as a user does; it must resolve to the digest we pushed.
+          # By tag, as a user does; it must resolve to the digest we signed.
           cosign verify "$IMAGE:$TAG" \
             --certificate-identity "$identity" \
             --certificate-oidc-issuer "$CERT_OIDC_ISSUER" > verify.json
@@ -322,6 +391,7 @@ jobs:
           name: release-sbom
           path: sbom
           if-no-files-found: error
+          overwrite: true
           retention-days: 7
 
   # Runs the pushed image on both architectures (arm64 under QEMU).
@@ -385,13 +455,44 @@ jobs:
           REGISTRY_USER: ${{ github.actor }}
           REGISTRY_TOKEN: ${{ github.token }}
         run: echo "$REGISTRY_TOKEN" | helm registry login ghcr.io --username "$REGISTRY_USER" --password-stdin
+      # Resume: a chart version that is already published is never packaged
+      # or pushed again (the package is not byte-reproducible, so a second
+      # push would put a different digest under the same version). The
+      # published package is pulled instead and carried through the same
+      # checks, signing and verification.
+      - name: Look for an already published chart
+        id: existing
+        run: |
+          mkdir existing
+          if helm pull "$CHART_REPO/secretspec-operator" --version "$VERSION" --destination existing > pull.log 2>&1; then
+            cat pull.log
+            digest="$(awk '/^Digest:/ {print $2}' pull.log)"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            echo "::notice::chart $VERSION already exists ($digest); resuming with it, nothing is pushed"
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          # Access errors count as "does not exist": this job holds a write
+          # token, so it could read a chart that exists.
+          elif grep -qiE 'not found|manifest unknown|name unknown|404|denied|unauthorized' pull.log; then
+            cat pull.log
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          else
+            cat pull.log
+            exit 1
+          fi
       # The committed Chart.yaml keeps the workspace version; the release
       # version (which may be an rc) is applied here only.
       - name: Package the chart
+        env:
+          PUBLISHED: ${{ steps.existing.outputs.published }}
         run: |
           mkdir chart
-          helm package charts/secretspec-operator \
-            --version "$VERSION" --app-version "$VERSION" --destination chart
+          if [[ "$PUBLISHED" == "true" ]]; then
+            cp "existing/secretspec-operator-${VERSION}.tgz" chart/
+          else
+            helm package charts/secretspec-operator \
+              --version "$VERSION" --app-version "$VERSION" --destination chart
+          fi
           ls -l chart
       - name: Check the packaged chart
         run: |
@@ -406,18 +507,28 @@ jobs:
           test "$images" = "$IMAGE:$TAG"
       - name: Push the chart
         id: push
+        if: steps.existing.outputs.published != 'true'
         run: |
           helm push "chart/secretspec-operator-${VERSION}.tgz" "$CHART_REPO" 2>&1 | tee push.log
           digest="$(awk '/^Digest:/ {print $2}' push.log)"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Select the chart digest
+        id: chart_digest
+        env:
+          EXISTING_DIGEST: ${{ steps.existing.outputs.digest }}
+          PUSHED_DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          digest="${EXISTING_DIGEST:-$PUSHED_DIGEST}"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Sign the chart
         env:
-          CHART_DIGEST: ${{ steps.push.outputs.digest }}
+          CHART_DIGEST: ${{ steps.chart_digest.outputs.digest }}
         run: cosign sign --yes "${CHART_REPO#oci://}/secretspec-operator@$CHART_DIGEST"
       - name: Verify the chart
         env:
-          CHART_DIGEST: ${{ steps.push.outputs.digest }}
+          CHART_DIGEST: ${{ steps.chart_digest.outputs.digest }}
         run: |
           identity="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${TAG}"
           cosign verify "${CHART_REPO#oci://}/secretspec-operator:${VERSION}" \
@@ -430,6 +541,7 @@ jobs:
           name: release-chart
           path: chart
           if-no-files-found: error
+          overwrite: true
           retention-days: 7
 
   release:

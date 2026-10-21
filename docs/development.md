@@ -296,10 +296,37 @@ git tag -a v0.1.0 -m "v0.1.0"                # final release
 git push origin v0.1.0
 ```
 
-If a release run fails because of a transient problem (registry, runner),
-re-run the failed jobs of that workflow run. If it fails because of the code or
-the workflow, fix it on `main` and cut the next candidate (`-rc.2`) or patch
-version; do not re-tag.
+#### When a release run fails
+
+The workflow never changes what a pushed tag points to, also not when a run is
+repeated. The build is not reproducible, so a second build would have a different
+digest; therefore the image is first pushed **by digest without a tag**, scanned,
+signed and attested, and only then tagged. A re-run that finds the tag already
+present resumes with the digest the tag points to instead of rebuilding, and the
+job fails if the tag points anywhere else. The chart is handled the same way: a
+chart version that already exists in the registry is pulled and signed, never
+packaged and pushed again.
+
+Use **"Re-run failed jobs"** (not "Re-run all jobs") on the same workflow run,
+but only when the cause is transient (registry, Sigstore, runner, scanner
+database download) and the failed job is one of:
+
+| Failed job | Re-run is safe because |
+|---|---|
+| `verify`, `build` | Nothing has been published yet. |
+| `image`, before its "Tag the image" step (scan, SBOM, sign, attest) | The tag does not exist yet. A new image is built and pushed untagged; the digest of the failed attempt stays in the registry as an untagged (possibly signed) leftover that no tag refers to. |
+| `image`, at or after "Tag the image" | The tag exists and is reused; the image is scanned, signed and verified again (extra signatures on the same digest are harmless). |
+| `smoke`, `chart` | The image is fixed. `chart` reuses a chart version that was already pushed. |
+| `release` | If the GitHub Release was created but is incomplete, delete that **release** (not the tag) in the UI first; `gh release create` refuses to overwrite one. |
+
+Cut the next candidate (`-rc.2`) or patch version instead, and do not re-tag, when:
+
+- the failure is caused by the code, the chart or the workflow itself (fix it on
+  `main` first);
+- the scan fails on a vulnerability (the image is untagged and unsigned);
+- the workflow stops with "points to …, not to …" (somebody else moved or created
+  the tag);
+- a published image or chart turns out to be wrong.
 
 ### What the workflow does
 
@@ -307,9 +334,9 @@ version; do not re-tag.
 |---|---|
 | `verify` | Checks the tag format, that its version matches the workspace version (and the chart files), and that the commit is reachable from `main`; then runs the full gate: `fmt`, `clippy -D warnings`, tests including the ignored RSA tests in release mode, `crdgen --check`, `chart-test`, `cargo deny`, `cargo audit`. |
 | `build` | Static musl binaries for amd64 and arm64 (`cargo xtask dist`, cargo-zigbuild), uploaded as an artifact. |
-| `image` | Builds and pushes the multi-arch image (tag only), scans each platform image with grype (fails on a fixable high or critical finding), creates an SPDX SBOM per platform with syft, signs the index and the platform images with cosign, attests the SBOMs on the platform images, and verifies it all with the documented commands. |
+| `image` | Builds the multi-arch image and pushes it by digest (no tag), scans each platform image with grype (fails on a fixable high or critical finding), creates an SPDX SBOM per platform with syft, signs the index and the platform images with cosign, attests the SBOMs on the platform images, then creates the release tag (only if it is free or already points to that digest) and verifies it all with the documented commands. |
 | `smoke` | Runs the pushed image with `--help` on amd64 and on arm64 (QEMU). |
-| `chart` | Packages the chart at the release version, checks that it renders the image `ghcr.io/jabbas/secretspec-operator:<tag>`, pushes it, signs it and verifies the signature. |
+| `chart` | Packages the chart at the release version (or, if that version is already published, pulls it), checks that it renders the image `ghcr.io/jabbas/secretspec-operator:<tag>`, pushes it if new, signs it and verifies the signature. |
 | `release` | Creates the GitHub Release (pre-release for `-rc.N`) with generated notes, the chart package, the SBOMs and `SHA256SUMS`. |
 
 Write permissions are granted per job: only `image` and `chart` can push packages
