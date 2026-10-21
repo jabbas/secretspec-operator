@@ -307,6 +307,13 @@ job fails if the tag points anywhere else. The chart is handled the same way: a
 chart version that already exists in the registry is pulled and signed, never
 packaged and pushed again.
 
+The registry lookups behind this (`.github/scripts/registry-lookup.sh`) fail
+closed. Right before it creates the image tag, the workflow accepts only an
+explicit "manifest unknown / not found" answer as "tag is free"; an access error
+stops the job (re-run it). For the chart, an access error is retried, because a
+package that was never pushed may be answered that way, and the lookup is repeated
+immediately before `helm push`, which would silently overwrite a version.
+
 Use **"Re-run failed jobs"** (not "Re-run all jobs") on the same workflow run,
 but only when the cause is transient (registry, Sigstore, runner, scanner
 database download) and the failed job is one of:
@@ -323,7 +330,10 @@ Cut the next candidate (`-rc.2`) or patch version instead, and do not re-tag, wh
 
 - the failure is caused by the code, the chart or the workflow itself (fix it on
   `main` first);
-- the scan fails on a vulnerability (the image is untagged and unsigned);
+- the scan fails on a vulnerability (on the first attempt the image stays
+  untagged and unsigned; on a resume the already tagged and signed image is not
+  changed, the release is just never completed, so a fixed image needs a new
+  version);
 - the workflow stops with "points to …, not to …" (somebody else moved or created
   the tag);
 - a published image or chart turns out to be wrong.

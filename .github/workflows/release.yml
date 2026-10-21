@@ -228,23 +228,10 @@ jobs:
       - name: Look for an already published tag
         id: existing
         run: |
-          # Prints the digest the reference points to, nothing when it does not
-          # exist, and fails on any other error. Access errors count as "does
-          # not exist": this job holds a write token, so it could read a tag
-          # that exists, and it could not push either way.
-          tag_digest() {
-            local out err
-            err="$(mktemp)"
-            if out="$(docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' 2> "$err")"; then
-              jq -er '.digest' <<< "$out"
-            elif grep -qiE 'not found|manifest unknown|name unknown|404|denied|unauthorized' "$err"; then
-              :
-            else
-              cat "$err" >&2
-              return 1
-            fi
-          }
-          digest="$(tag_digest "$IMAGE:$TAG")"
+          source .github/scripts/registry-lookup.sh
+          # Lenient: a wrong "absent" here only costs a pointless build, the
+          # tag step below re-checks strictly before it writes anything.
+          digest="$(tag_digest "$IMAGE:$TAG" lenient)"
           if [[ -n "$digest" ]]; then
             [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
             echo "::notice::$IMAGE:$TAG already exists ($digest); resuming with it, nothing is rebuilt"
@@ -339,22 +326,15 @@ jobs:
         env:
           INDEX_DIGEST: ${{ steps.index.outputs.digest }}
         run: |
-          tag_digest() {
-            local out err
-            err="$(mktemp)"
-            if out="$(docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' 2> "$err")"; then
-              jq -er '.digest' <<< "$out"
-            elif grep -qiE 'not found|manifest unknown|name unknown|404|denied|unauthorized' "$err"; then
-              :
-            else
-              cat "$err" >&2
-              return 1
-            fi
-          }
-          current="$(tag_digest "$IMAGE:$TAG")"
+          source .github/scripts/registry-lookup.sh
+          # Strict: the repository exists by now (the image was pushed by
+          # digest), so a missing tag is answered "manifest unknown". Any
+          # other answer, in particular an access error, stops the job
+          # instead of risking an overwrite.
+          current="$(tag_digest "$IMAGE:$TAG" strict)"
           if [[ -z "$current" ]]; then
             docker buildx imagetools create --tag "$IMAGE:$TAG" "$IMAGE@$INDEX_DIGEST"
-            current="$(tag_digest "$IMAGE:$TAG")"
+            current="$(tag_digest "$IMAGE:$TAG" strict)"
           fi
           if [[ "$current" != "$INDEX_DIGEST" ]]; then
             echo "::error::$IMAGE:$TAG points to '$current', not to $INDEX_DIGEST; a pushed tag is never moved. Cut the next release candidate."
@@ -463,22 +443,19 @@ jobs:
       - name: Look for an already published chart
         id: existing
         run: |
+          source .github/scripts/registry-lookup.sh
           mkdir existing
-          if helm pull "$CHART_REPO/secretspec-operator" --version "$VERSION" --destination existing > pull.log 2>&1; then
+          chart_resolve "$CHART_REPO/secretspec-operator" "$VERSION" existing pull.log
+          echo "chart lookup: $CHART_STATE"
+          if [[ "$CHART_STATE" == found ]]; then
             cat pull.log
             digest="$(awk '/^Digest:/ {print $2}' pull.log)"
             [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
             echo "::notice::chart $VERSION already exists ($digest); resuming with it, nothing is pushed"
             echo "published=true" >> "$GITHUB_OUTPUT"
             echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          # Access errors count as "does not exist": this job holds a write
-          # token, so it could read a chart that exists.
-          elif grep -qiE 'not found|manifest unknown|name unknown|404|denied|unauthorized' pull.log; then
-            cat pull.log
-            echo "published=false" >> "$GITHUB_OUTPUT"
           else
-            cat pull.log
-            exit 1
+            echo "published=false" >> "$GITHUB_OUTPUT"
           fi
       # The committed Chart.yaml keeps the workspace version; the release
       # version (which may be an rc) is applied here only.
@@ -509,6 +486,16 @@ jobs:
         id: push
         if: steps.existing.outputs.published != 'true'
         run: |
+          source .github/scripts/registry-lookup.sh
+          # `helm push` overwrites an existing version, so look once more,
+          # right before writing. The result of the first lookup may have been
+          # a misread access error.
+          mkdir recheck
+          chart_resolve "$CHART_REPO/secretspec-operator" "$VERSION" recheck recheck.log
+          if [[ "$CHART_STATE" == found ]]; then
+            echo "::error::chart $VERSION exists in the registry; not pushing over it. Re-run the failed jobs to resume with it."
+            exit 1
+          fi
           helm push "chart/secretspec-operator-${VERSION}.tgz" "$CHART_REPO" 2>&1 | tee push.log
           digest="$(awk '/^Digest:/ {print $2}' push.log)"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
