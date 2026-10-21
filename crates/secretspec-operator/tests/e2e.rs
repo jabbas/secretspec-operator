@@ -233,8 +233,8 @@ fn unique_id() -> String {
 }
 
 /// Creates `count` PSA-`restricted` app namespaces, runs `body` with their
-/// names, then restores the default install (so finalizers can be processed)
-/// and deletes the namespaces, whether or not `body` panicked.
+/// names, then restores the default install and deletes the namespaces,
+/// whether or not `body` panicked.
 async fn with_app_namespaces<F, Fut>(count: usize, body: F)
 where
     F: FnOnce(Client, Vec<String>) -> Fut,
@@ -253,8 +253,10 @@ where
             .unwrap_or_else(|e| panic!("cannot create namespace {ns}: {e}"));
     }
     let outcome = tokio::spawn(body(client.clone(), names.clone())).await;
-    // SecretSpecs with deletionPolicy Delete carry a finalizer: the operator
-    // (watching all namespaces) must run while their namespace is deleted.
+    // SecretSpecs carry no finalizer (deletionPolicy Delete is an owner
+    // reference, garbage-collected by Kubernetes), so deleting the namespaces
+    // does not depend on the operator. The default install is restored so the
+    // next test starts from it.
     let restored = tokio::spawn({
         let client = client.clone();
         async move {
