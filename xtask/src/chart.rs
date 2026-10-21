@@ -371,13 +371,17 @@ fn expected_operator_rules() -> Vec<PolicyRule> {
     ]
 }
 
-/// Design §9: the lease permissions (operator namespace only).
-fn expected_lease_rules() -> Vec<PolicyRule> {
-    vec![rule(
-        "coordination.k8s.io",
-        &["leases"],
-        &["get", "create", "update"],
-    )]
+/// Design §9: the lease permissions (operator namespace only). `get` and
+/// `update` are limited to the one Lease (`lease_name`, the operator's
+/// `LEASE_NAME`); `create` cannot be limited by name.
+fn expected_lease_rules(lease_name: &str) -> Vec<PolicyRule> {
+    vec![
+        PolicyRule {
+            resource_names: Some(vec![lease_name.to_owned()]),
+            ..rule("coordination.k8s.io", &["leases"], &["get", "update"])
+        },
+        rule("coordination.k8s.io", &["leases"], &["create"]),
+    ]
 }
 
 fn rules_of(value: &Value) -> Result<Vec<PolicyRule>, String> {
@@ -482,7 +486,9 @@ fn ensure_lease_rbac(rendered: &Rendered, sa: &str) -> Result<(), String> {
         &namespace_of(lease),
         &Some(NAMESPACE),
     )?;
-    ensure_rules("lease Role", lease, &expected_lease_rules())?;
+    // The rule must name exactly the Lease the operator uses (LEASE_NAME).
+    let lease_name = env_value(&env_map(&rendered.container()?), "LEASE_NAME")?;
+    ensure_rules("lease Role", lease, &expected_lease_rules(&lease_name))?;
     let bindings: Vec<&Value> = rendered
         .of_kind("RoleBinding")
         .filter(|b| str_at(b, &["roleRef", "name"]) == Some(name_of(lease)))
@@ -1046,7 +1052,24 @@ fn chart_rejects_multi_replica_without_leader_election(ctx: &Ctx) -> Result<(), 
         &ha.deployment()?.spec.and_then(|s| s.replicas),
         &Some(2),
     )?;
+    // With election on, the default rolling update is kept (no `strategy`
+    // override); with it off, only Recreate keeps two operators from running
+    // side by side during a rollout.
+    ensure_eq(
+        "strategy with leader election",
+        &ha.deployment()?.spec.and_then(|s| s.strategy),
+        &None,
+    )?;
     let single = ctx.helm.render(&["leaderElection.enabled=false"])?;
+    ensure_eq(
+        "strategy type without leader election",
+        &single
+            .deployment()?
+            .spec
+            .and_then(|s| s.strategy)
+            .and_then(|s| s.type_),
+        &Some("Recreate".to_owned()),
+    )?;
     let env = env_map(&single.container()?);
     ensure_eq(
         "LEADER_ELECTION (disabled)",
@@ -1246,7 +1269,7 @@ mod tests {
     fn expected_rules_match_design_section_9() {
         let verbs: Vec<(String, Vec<String>)> = expected_operator_rules()
             .into_iter()
-            .chain(expected_lease_rules())
+            .chain(expected_lease_rules("secretspec-operator"))
             .map(|r| (r.resources.unwrap_or_default().join(","), r.verbs))
             .collect();
         assert!(
@@ -1255,6 +1278,6 @@ mod tests {
                 .all(|(_, v)| !v.iter().any(|verb| verb == "delete" || verb == "*")),
             "no delete or wildcard verbs: {verbs:?}"
         );
-        assert_eq!(verbs.len(), 6);
+        assert_eq!(verbs.len(), 7);
     }
 }

@@ -186,6 +186,15 @@ server that checks the htpasswd line accepts any password that begins with those
 72 bytes. The operator warns with `PasswordTruncated`; keep passwords at or
 below 72 bytes.
 
+### Leader-election Lease
+
+The Lease (named after the release fullname, in the release namespace) is
+owned by the operator. **Do not delete it while the operator runs.** A leader
+that finds its Lease gone treats it as lost leadership: it stops reconciling and
+exits, and the pod restarts (a short pause, no value changes). To hand over
+leadership on purpose, restart the leader pod instead. The Lease has no
+effect on generated values.
+
 ## Using SecretSpec in a Helm chart
 
 Application charts usually share a "common labels" helper. The standard one

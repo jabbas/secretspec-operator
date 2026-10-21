@@ -71,7 +71,8 @@ The chart grants exactly the following, and nothing more:
 | `secretspec.jabbas.eu` | `secretspecs/finalizers` | `update` | Needed on clusters with the `OwnerReferencesPermissionEnforcement` admission plugin (for example OpenShift) to set `blockOwnerDeletion` on the owner reference. |
 | `""` | `secrets` | `get`, `list`, `watch`, `create`, `patch`, `update` | Read and write the generated Secrets. **No `delete`.** |
 | `events.k8s.io` | `events` | `create`, `patch` | Publish Events. |
-| `coordination.k8s.io` | `leases` | `get`, `create`, `update` | Leader election; a `Role` in the release namespace only. |
+| `coordination.k8s.io` | `leases` | `get`, `update` (only the operator's own Lease, by `resourceNames`) | Leader election; a `Role` in the release namespace only. |
+| `coordination.k8s.io` | `leases` | `create` | Creates the Lease on first start. Kubernetes RBAC cannot restrict `create` by name, so this is a separate rule. |
 
 - **Cluster mode** (`watchNamespaces: []`): a `ClusterRole` and
   `ClusterRoleBinding`, so the permissions above apply in every namespace —

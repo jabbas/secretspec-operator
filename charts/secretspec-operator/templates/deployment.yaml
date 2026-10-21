@@ -9,6 +9,12 @@ metadata:
     {{- include "secretspec-operator.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicas }}
+  {{- if not .Values.leaderElection.enabled }}
+  # Without a Lease nothing stops two operators from reconciling at once, so
+  # never run the old and the new Pod side by side during a rollout.
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       {{- include "secretspec-operator.selectorLabels" . | nindent 6 }}

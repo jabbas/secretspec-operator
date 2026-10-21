@@ -23,9 +23,12 @@ always installs the image of the same release.
 The pod complies with the Pod Security Standard `restricted`: it runs as a
 non-root user (UID/GID 65532), with a read-only root file system, all
 capabilities dropped, no privilege escalation and the `RuntimeDefault` seccomp
-profile. You can enforce `restricted` on the operator's namespace:
+profile. You can enforce `restricted` on the operator's namespace. Create the
+namespace first, then label it (`helm install --create-namespace` below accepts
+a namespace that already exists):
 
 ```sh
+kubectl create namespace secretspec-system
 kubectl label namespace secretspec-system pod-security.kubernetes.io/enforce=restricted
 ```
 
@@ -351,6 +354,13 @@ leader renews it every 5 seconds, and a standby retries every 5 seconds. On a
 graceful shutdown the leader releases the Lease, so a standby takes over within
 about 5 seconds; after a crash it takes over once the Lease has expired, within
 about 20 seconds. A leader change never changes a generated value.
+
+With `leaderElection.enabled=false` (single replica only) the chart renders the
+Deployment with the `Recreate` strategy: the old Pod stops before the new one
+starts, so a rollout never runs two operators at once.
+
+Do not delete the Lease while the operator runs; see
+[Operations](operations.md#leader-election-lease).
 
 The pod probes use two endpoints on `http.port`:
 

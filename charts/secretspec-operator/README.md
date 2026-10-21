@@ -61,7 +61,9 @@ Permissions (complete list): `secretspecs` get/list/watch;
 `secretspecs/status` get/patch/update; `secretspecs/finalizers` update;
 `secrets` get/list/watch/create/patch/update (no delete); `events.k8s.io`
 `events` create/patch. With leader election, a Role in the release namespace
-grants `coordination.k8s.io` `leases` get/create/update.
+grants `coordination.k8s.io` `leases` get/update on the operator's own Lease
+(by `resourceNames`) and create. Without leader election the Deployment uses
+the `Recreate` strategy, so a rollout never runs two operators at once.
 
 ## Image reference
 
