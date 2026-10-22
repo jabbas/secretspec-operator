@@ -608,13 +608,24 @@ jobs:
             # A final release: the notes cover everything since the previous
             # FINAL tag, so the release candidates in between are included.
             # The first final release has no start tag: the notes then cover
-            # the whole history.
+            # the whole history. A failed tag lookup is NOT that case: it
+            # fails the job (the exit status of gh is kept apart from the
+            # filter's, where only "no match" is tolerated).
+            if ! all_tags="$(gh api --paginate "repos/$GITHUB_REPOSITORY/tags" --jq '.[].name')"; then
+              echo "::error::could not list the repository tags; refusing to publish notes without a start tag"
+              exit 1
+            fi
+            if final_tags="$(grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$all_tags")"; then
+              :
+            elif [[ $? -eq 1 ]]; then
+              final_tags="" # grep found no final tag
+            else
+              echo "::error::filtering the tag list failed"
+              exit 1
+            fi
             previous="$(
-              {
-                gh api --paginate "repos/$GITHUB_REPOSITORY/tags" --jq '.[].name' \
-                  | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true
-                echo "$TAG"
-              } | sort -uV | grep -B1 -x -F "$TAG" | head -n 1
+              { printf '%s\n' "$final_tags"; echo "$TAG"; } \
+                | sed '/^$/d' | sort -uV | grep -B1 -x -F "$TAG" | head -n 1
             )"
             if [[ -n "$previous" && "$previous" != "$TAG" ]]; then
               echo "release notes since the previous final tag $previous"
