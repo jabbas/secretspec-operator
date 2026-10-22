@@ -70,7 +70,8 @@ pair. Literals are untouched.
 - **Changing the interval** moves the next rotation to `generated-at + interval`.
   Shortening it so that this time is already past rotates immediately.
 - **Removing `rotation`** disables the schedule; values stay as they are.
-- The next rotation is visible in the `NEXT ROTATION` column and in
+- The next rotation is visible in the `NEXT ROTATION` column (an RFC 3339
+  timestamp in UTC, for example `2026-11-22T10:00:00Z`) and in
   `status.nextRotationTime`; `status.lastRotationTime` records the last one. A
   `Rotated` Event lists the keys, never values.
 

@@ -75,7 +75,7 @@ fn crd_has_expected_identity() {
                 Some("string")
             ),
             ("Kind", ".status.kind", Some("string")),
-            ("Next Rotation", ".status.nextRotationTime", Some("date")),
+            ("Next Rotation", ".status.nextRotationTime", Some("string")),
             ("Age", ".metadata.creationTimestamp", Some("date")),
         ]
     );

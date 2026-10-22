@@ -10,7 +10,8 @@ kubectl explain secretspec.spec  # field documentation, straight from the CRD
 ```
 
 Printer columns: `READY` (the `Ready` condition status), `KIND`
-(`Fields`, `SSHKeyPair` or `BasicAuth`), `NEXT ROTATION` and `AGE`.
+(`Fields`, `SSHKeyPair` or `BasicAuth`), `NEXT ROTATION` (the RFC 3339 timestamp of
+`status.nextRotationTime`, empty without a rotation) and `AGE`.
 
 One `SecretSpec` describes **exactly one kind of secret**: set exactly one of
 `fields`, `sshKeyPair` or `basicAuth`. An application that needs a password and
