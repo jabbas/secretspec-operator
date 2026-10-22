@@ -152,8 +152,16 @@ jobs:
           "$RUNNER_TEMP/zig-venv/bin/pip" install --require-hashes -r .github/requirements/ziglang.txt
           echo "$RUNNER_TEMP/zig-venv/bin" >> "$GITHUB_PATH"
       - name: Build amd64
+        # The zig linker prints a deprecation warning that cargo's build.warnings=deny
+        # (set by setup-rust-toolchain) turns into an error; code warnings stay denied by CI clippy.
+        env:
+          CARGO_BUILD_WARNINGS: warn
         run: cargo xtask dist --target x86_64-unknown-linux-musl --release
       - name: Build arm64
+        # The zig linker prints a deprecation warning that cargo's build.warnings=deny
+        # (set by setup-rust-toolchain) turns into an error; code warnings stay denied by CI clippy.
+        env:
+          CARGO_BUILD_WARNINGS: warn
         run: cargo xtask dist --target aarch64-unknown-linux-musl --release
       - name: Check the binaries
         run: |
