@@ -21,6 +21,9 @@ LABEL org.opencontainers.image.title="secretspec-operator" \
       org.opencontainers.image.revision="${REVISION}"
 
 COPY target/dist/${TARGETARCH}/secretspec-operator /secretspec-operator
+# Licence and notices of this project. Licences of the bundled third-party
+# crates are not shipped yet (they are listed in the SBOM).
+COPY LICENSE NOTICE /licenses/
 
 USER 65532:65532
 ENTRYPOINT ["/secretspec-operator"]

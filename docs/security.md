@@ -187,11 +187,36 @@ workflow `.github/workflows/release.yml`, which:
 - starts the pushed image on both architectures (`--help`) before the chart and
   the GitHub Release are published.
 
+**What the SBOM and the scan cover.** The operator binary is built with
+[cargo-auditable](https://github.com/rust-secure-code/cargo-auditable), which
+embeds the exact list of Rust crates (from `Cargo.lock`) in the binary; the
+embedded list survives stripping. syft and grype read it, so for each platform
+image:
+
+- the **SBOM** lists the Rust crates compiled into the operator (name, version,
+  `pkg:cargo/…` purl) **and** the Debian packages of the distroless base image.
+  The release fails if an SBOM lists no Rust crates. It does not contain
+  licence texts, and it does not describe the chart or the Helm values;
+- the **vulnerability scan** (grype) checks the same two sets against its
+  vulnerability database at the time of the release. It does not check the
+  chart, the Kubernetes version or your cluster, and it cannot see anything the
+  database does not know yet. The release also runs `cargo audit` and
+  `cargo deny` on `Cargo.lock` (RUSTSEC advisories, licences, sources); the
+  one accepted advisory is explained above.
+
+The SBOM is a statement about a build, not a promise: a vulnerability published
+after the release is not reflected in it. Re-scan the SBOM or the image with
+your own tool to learn about newer advisories.
+
 The GitHub Release carries the chart package, the two SBOMs
 (`secretspec-operator-<tag>-linux-amd64.spdx.json` and `…-linux-arm64.spdx.json`)
 and a `SHA256SUMS` file. The SBOM files there are copies; the signed
 attestations in the registry are the authoritative ones, and `SHA256SUMS`
 protects only the download, it is not signed itself.
+
+The signatures and attestations are created with cosign v2.6.5, in the legacy
+(OCI tag based) format. cosign v2 and v3 can verify them with the commands
+below.
 
 A valid signature proves that the artifact was produced by that workflow of the
 `jabbas/secretspec-operator` repository for exactly that tag. The identity to

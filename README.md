@@ -27,7 +27,7 @@ spec:
 Run the `kubectl` commands from a clone of this repository.
 
 ```sh
-helm install secretspec-operator oci://ghcr.io/jabbas/charts/secretspec-operator --version 0.1.0 --namespace secretspec-system --create-namespace
+helm install secretspec-operator oci://ghcr.io/jabbas/charts/secretspec-operator --version 0.1.0 --namespace secretspec-system --create-namespace --wait
 kubectl apply -f examples/app-admin-password.yaml
 kubectl wait --for=condition=Ready secretspec/app-admin --timeout=60s
 kubectl get secretspec app-admin

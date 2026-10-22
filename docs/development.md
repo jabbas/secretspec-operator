@@ -2,7 +2,9 @@
 
 ## Prerequisites
 
-- Rust toolchain (`rust-toolchain.toml` pins it; `rustup` installs it on first use)
+- Rust toolchain (`rust-toolchain.toml` pins the exact release, currently 1.99.1,
+  so CI, the release build and your machine agree; `rustup` installs it on first
+  use. Raise it deliberately, in its own commit.)
 - `cargo-deny` for `cargo deny check`
 - For the server-side tests only: a container runtime — **Docker or Podman** —
   and [kind](https://kind.sigs.k8s.io/) (the CI uses v0.33.0)
@@ -186,9 +188,9 @@ One-time setup (user-level; versions used by CI and last verified locally):
 
 ```sh
 rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
-cargo install --locked cargo-zigbuild --version 0.23.4
+cargo install --locked cargo-zigbuild@0.23.4 cargo-auditable@0.7.7
 python3 -m venv ~/.local/share/zig-venv
-~/.local/share/zig-venv/bin/pip install ziglang==0.17.0
+~/.local/share/zig-venv/bin/pip install ziglang==0.17.0   # CI: --require-hashes -r .github/requirements/ziglang.txt
 export PATH="$HOME/.local/share/zig-venv/bin:$PATH"   # cargo-zigbuild finds `python3 -m ziglang`
 ```
 
@@ -199,6 +201,10 @@ cargo xtask dist --target x86_64-unknown-linux-musl --release    # target/dist/a
 cargo xtask dist --target aarch64-unknown-linux-musl --release   # target/dist/arm64/
 file target/dist/*/secretspec-operator   # "statically linked" ELF per arch
 ```
+
+The binary embeds its dependency list (cargo-auditable); the list survives
+stripping. To check it, `syft target/dist/amd64/secretspec-operator` lists the
+Rust crates (about 270).
 
 Build and smoke-test the image with Podman (Docker: replace `podman` by
 `docker`); `TARGETARCH` selects the binary, and the non-host platform runs
@@ -343,7 +349,7 @@ Cut the next candidate (`-rc.2`) or patch version instead, and do not re-tag, wh
 | Job | Does |
 |---|---|
 | `verify` | Checks the tag format, that its version matches the workspace version (and the chart files), and that the commit is reachable from `main`; then runs the full gate: `fmt`, `clippy -D warnings`, tests including the ignored RSA tests in release mode, `crdgen --check`, `chart-test`, `cargo deny`, `cargo audit`. |
-| `build` | Static musl binaries for amd64 and arm64 (`cargo xtask dist`, cargo-zigbuild), uploaded as an artifact. |
+| `build` | Static musl binaries for amd64 and arm64 (`cargo xtask dist`: cargo-zigbuild through cargo-auditable, so the binary carries its crate list), uploaded as an artifact. |
 | `image` | Builds the multi-arch image and pushes it by digest (no tag), scans each platform image with grype (fails on a fixable high or critical finding), creates an SPDX SBOM per platform with syft, signs the index and the platform images with cosign, attests the SBOMs on the platform images, then creates the release tag (only if it is free or already points to that digest) and verifies it all with the documented commands. |
 | `smoke` | Runs the pushed image with `--help` on amd64 and on arm64 (QEMU). |
 | `chart` | Packages the chart at the release version (or, if that version is already published, pulls it), checks that it renders the image `ghcr.io/jabbas/secretspec-operator:<tag>`, pushes it if new, signs it and verifies the signature. |
@@ -376,3 +382,18 @@ without logging in) and that a pre-release is marked as such.
   `linux_amd64.tar.gz` from the `*_checksums.txt` of that upstream release and
   change both. cosign is installed by the SHA-pinned `sigstore/cosign-installer`,
   which verifies the download itself. Renovate does not touch these pins.
+- **Build tools** in `build` (and in the CI `e2e` job): `cargo-zigbuild` and
+  `cargo-auditable` are pinned in the `taiki-e/install-action` step; `ziglang` is
+  installed with `--require-hashes` from `.github/requirements/ziglang.txt` (the
+  hash is that of the linux x86_64 wheel; bump version and hash together). The
+  BuildKit image of `docker/setup-buildx-action` is pinned by digest
+  (`driver-opts`) in both workflows; bump all places together. Renovate does not
+  touch these pins either.
+- **Accepted residual risk.** If an existing chart version stays unreadable
+  during *both* lookups (the first and the one right before `helm push`), it
+  could be overwritten; this is accepted because the registry would have to
+  answer access errors for a package our own credentials can write twice in a
+  row, and closing it would also block the first release, whose "never pushed"
+  answer looks exactly the same.
+- **cosign.** Releases are signed with cosign v2.6.5 in the legacy format, which
+  cosign v2 and v3 both verify.

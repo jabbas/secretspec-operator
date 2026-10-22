@@ -13,6 +13,11 @@
 # built-in SSH auth type use it directly (private key under `ssh-privatekey`).
 # The public key comment identifies the key on the Git server.
 #
+# The default deletionPolicy (Delete) removes the Secret, and with it the key,
+# when this SecretSpec is deleted or the release is reinstalled. If the public
+# key is registered on the Git server, add `deletionPolicy: Retain` so the key
+# survives and the registration stays valid.
+#
 # Apply with: kubectl apply -n <namespace> -f ssh-deploy-key.yaml
 apiVersion: secretspec.jabbas.eu/v1alpha1
 kind: SecretSpec

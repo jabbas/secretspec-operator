@@ -53,7 +53,9 @@ First release.
   `linux/arm64`, a static binary on a distroless image. Version tags only, no
   `latest`.
 - **Release signing:** cosign keyless signatures for the image and the chart
-  and a signed SPDX SBOM attestation per platform image.
+  and a signed SPDX SBOM attestation per platform image. The SBOM lists the
+  Rust crates (the binary embeds its dependency list) and the base image
+  packages.
 - **Documentation and seven examples.**
 
 ### Compatibility
