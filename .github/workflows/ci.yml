@@ -160,6 +160,10 @@ jobs:
           "$RUNNER_TEMP/zig-venv/bin/pip" install --require-hashes -r .github/requirements/ziglang.txt
           echo "$RUNNER_TEMP/zig-venv/bin" >> "$GITHUB_PATH"
       - name: Build the static binary
+        # The zig linker prints a deprecation warning that cargo's build.warnings=deny
+        # (set by setup-rust-toolchain) turns into an error; code warnings stay denied by the clippy job.
+        env:
+          CARGO_BUILD_WARNINGS: warn
         run: cargo xtask dist --target x86_64-unknown-linux-musl --release
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
