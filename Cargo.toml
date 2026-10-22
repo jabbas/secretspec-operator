@@ -3,10 +3,11 @@ resolver = "3"
 members = ["crates/secretspec-api", "crates/secretspec-core", "crates/secretspec-operator", "xtask"]
 
 [workspace.package]
+version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/jabbas/secretspec-operator"
-# Floor imposed by kube 4.x; rust-toolchain.toml tracks current stable.
+# Floor imposed by kube 4.x; rust-toolchain.toml pins an exact stable release.
 rust-version = "1.89"
 
 [workspace.dependencies]

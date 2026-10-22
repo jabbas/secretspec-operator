@@ -1,0 +1,62 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests",
+    ":semanticCommits"
+  ],
+  "schedule": ["before 6am on monday"],
+  "timezone": "Europe/Warsaw",
+  "prConcurrentLimit": 5,
+  "labels": ["dependencies"],
+  "enabledManagers": ["cargo", "github-actions", "dockerfile"],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  },
+  "packageRules": [
+    {
+      "description": "The chart's image reference (tag from appVersion, digest empty) is released by this project, never pinned or bumped by Renovate",
+      "matchManagers": ["helm-values", "helmv3"],
+      "enabled": false
+    },
+    {
+      "description": "Cargo: group minor and patch updates; majors come as separate PRs",
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "cargo dependencies (minor and patch)",
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "description": "Cargo: majors",
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["major"],
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "description": "GitHub Actions: group minor and patch updates (SHA pins and the version comments are kept)",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "groupName": "github actions (minor and patch)",
+      "semanticCommitType": "ci",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "description": "GitHub Actions: majors",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["major"],
+      "semanticCommitType": "ci",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "description": "Containerfile base image: keep the digest pin current",
+      "matchManagers": ["dockerfile"],
+      "pinDigests": true,
+      "groupName": "container base images",
+      "semanticCommitType": "build",
+      "semanticCommitScope": "deps"
+    }
+  ]
+}

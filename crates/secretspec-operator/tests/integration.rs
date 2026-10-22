@@ -36,8 +36,8 @@ use secretspec_api::constants::{
 use secretspec_api::v1alpha1::SecretSpec;
 use serde_json::json;
 use support::{
-    Env, Rbac, SECRET_VERBS, data, log_mark, logs_since, ready, reconciled_lines, wait_until,
-    wait_until_for, with_env,
+    Env, Rbac, SECRET_VERBS, assert_not_logged, data, leak_needles, log_mark, logs_since, ready,
+    reconciled_lines, wait_until, wait_until_for, with_env,
 };
 
 /// Waits until the operator has logged at least one reconcile of
@@ -62,47 +62,6 @@ fn assert_owned_by(secret: &Secret, spec: &SecretSpec) {
     assert_eq!(owner.name, spec.name_any());
     assert_eq!(owner.uid, uid(spec));
     assert_eq!(owner.controller, Some(true));
-}
-
-/// Values shorter than this are not checked against the logs: they are
-/// literal, non-secret values (the `admin` username) that may well occur in
-/// unrelated log text.
-const MIN_CHECKED_LEN: usize = 8;
-
-/// The strings that would betray `value` in a log: its UTF-8 text (and, for
-/// multi-line values such as PEM keys, each long line) and its base64 form.
-fn leak_needles(value: &ByteString) -> Vec<String> {
-    let mut needles = Vec::new();
-    if value.0.len() < MIN_CHECKED_LEN {
-        return needles;
-    }
-    if let Ok(text) = std::str::from_utf8(&value.0) {
-        needles.push(text.to_owned());
-        needles.extend(
-            text.lines()
-                .map(str::trim)
-                .filter(|line| line.len() >= 16 && !line.starts_with("-----"))
-                .map(str::to_owned),
-        );
-    }
-    match serde_json::to_value(value).expect("ByteString serialises") {
-        serde_json::Value::String(base64) => needles.push(base64),
-        other => panic!("ByteString is not a string: {other}"),
-    }
-    needles
-}
-
-/// Asserts that no value of `secret` occurs in `logs`.
-fn assert_not_logged(secret: &Secret, logs: &str) {
-    let name = secret.name_any();
-    for (key, value) in secret.data.iter().flatten() {
-        for needle in leak_needles(value) {
-            assert!(
-                !logs.contains(&needle),
-                "{name}/{key}: a generated value appears in the operator logs"
-            );
-        }
-    }
 }
 
 /// 1. The examples generate Secrets with the expected keys and metadata, and

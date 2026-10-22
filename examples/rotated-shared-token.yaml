@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Shared token rotated every 30 days.
+#
+# Use this for a token shared between services in one namespace (for example
+# a webhook signing secret or an internal API token) when both sides read it
+# from the same Secret. The operator replaces the value every 30 days; the
+# consumers must pick up the change, e.g. by reading the mounted file on each
+# use or with a reloader that restarts them when the Secret changes.
+#
+# `kubectl get secretspec shared-token` shows the next rotation time.
+#
+# Apply with: kubectl apply -n <namespace> -f rotated-shared-token.yaml
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: shared-token
+spec:
+  rotation:
+    interval: 30d
+  fields:
+    - name: token
+      length: 48

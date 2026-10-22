@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Fernet key (symmetric encryption key, e.g. for Python's `cryptography`).
+#
+# A Fernet key is 32 random bytes encoded as URL-safe base64 with padding,
+# which is exactly `bytes: 32, encoding: base64url`. Use it for applications
+# that encrypt data at rest with Fernet and take the key from an environment
+# variable. Losing the key makes the encrypted data unreadable, so the Secret
+# is retained when the SecretSpec is deleted, and there is no rotation.
+#
+# Apply with: kubectl apply -n <namespace> -f fernet-key.yaml
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: fernet-key
+spec:
+  deletionPolicy: Retain
+  fields:
+    - name: fernet-key
+      bytes: 32
+      encoding: base64url

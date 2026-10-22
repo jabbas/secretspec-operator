@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# SSH deploy key for a Git repository.
+#
+# Use this when a workload (a GitOps controller, a CI runner, a backup job)
+# clones or pushes over SSH. The operator generates an ed25519 key pair; add
+# the public key as a deploy key on the Git server:
+#
+#   kubectl get secret -n <namespace> deploy-key \
+#     -o jsonpath='{.data.ssh-publickey}' | base64 -d
+#
+# The Secret type `kubernetes.io/ssh-auth` lets consumers that expect the
+# built-in SSH auth type use it directly (private key under `ssh-privatekey`).
+# The public key comment identifies the key on the Git server.
+#
+# The default deletionPolicy (Delete) removes the Secret, and with it the key,
+# when this SecretSpec is deleted or the release is reinstalled. If the public
+# key is registered on the Git server, add `deletionPolicy: Retain` so the key
+# survives and the registration stays valid.
+#
+# Apply with: kubectl apply -n <namespace> -f ssh-deploy-key.yaml
+apiVersion: secretspec.jabbas.eu/v1alpha1
+kind: SecretSpec
+metadata:
+  name: deploy-key
+spec:
+  secret:
+    type: kubernetes.io/ssh-auth
+  sshKeyPair:
+    algorithm: ed25519
+    comment: deploy-key

@@ -2,9 +2,12 @@
 
 //! Developer automation for the workspace. Run via `cargo xtask`.
 
+mod chart;
+
 use std::error::Error;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode, Stdio};
 use std::{env, fs};
 
 use kube::CustomResourceExt;
@@ -62,6 +65,130 @@ fn crdgen(check: bool) -> Result<ExitCode, BoxError> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// Name of the operator binary (and of the crate that builds it).
+const OPERATOR_BIN: &str = "secretspec-operator";
+
+/// Release targets: `(rust target triple, container architecture)`.
+const DIST_TARGETS: [(&str, &str); 2] = [
+    ("x86_64-unknown-linux-musl", "amd64"),
+    ("aarch64-unknown-linux-musl", "arm64"),
+];
+
+/// Parsed `cargo xtask dist` arguments.
+#[derive(Debug, PartialEq, Eq)]
+struct DistArgs {
+    target: &'static str,
+    arch: &'static str,
+    release: bool,
+}
+
+/// Parses `--target <triple> [--release]` (also `--target=<triple>`).
+fn parse_dist_args(args: &[&str]) -> Result<DistArgs, String> {
+    let mut target: Option<&str> = None;
+    let mut release = false;
+    let mut iter = args.iter().copied();
+    while let Some(arg) = iter.next() {
+        match arg {
+            "--release" => release = true,
+            "--target" => {
+                target = Some(iter.next().ok_or("--target needs a value")?);
+            }
+            other => match other.strip_prefix("--target=") {
+                Some(value) => target = Some(value),
+                None => return Err(format!("unexpected argument `{other}`")),
+            },
+        }
+    }
+    let target = target.ok_or("missing --target")?;
+    let (triple, arch) = DIST_TARGETS
+        .iter()
+        .copied()
+        .find(|(triple, _)| *triple == target)
+        .ok_or_else(|| {
+            let supported: Vec<&str> = DIST_TARGETS.iter().map(|(t, _)| *t).collect();
+            format!(
+                "unsupported target `{target}` (supported: {})",
+                supported.join(", ")
+            )
+        })?;
+    Ok(DistArgs {
+        target: triple,
+        arch,
+        release,
+    })
+}
+
+/// Whether `cargo <subcommand> --help` succeeds, i.e. the subcommand exists.
+fn cargo_subcommand_available(cargo: &OsStr, subcommand: &[&str]) -> bool {
+    Command::new(cargo)
+        .args(subcommand)
+        .arg("--help")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Builds a static musl operator binary with cargo-zigbuild, through
+/// cargo-auditable (the dependency list is embedded in the binary, so SBOM
+/// and vulnerability scanners see the crates), and places it at
+/// `target/dist/<arch>/secretspec-operator`, stripped. The embedded list
+/// survives stripping.
+fn dist(args: &DistArgs) -> Result<ExitCode, BoxError> {
+    let root = workspace_root()?;
+    let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+
+    if !cargo_subcommand_available(&cargo, &["zigbuild"]) {
+        eprintln!("error: cargo-zigbuild is not installed.");
+        eprintln!("Install it with `cargo install --locked cargo-zigbuild`, plus zig");
+        eprintln!("(for example `pip install ziglang`); see docs/development.md.");
+        return Ok(ExitCode::FAILURE);
+    }
+    if !cargo_subcommand_available(&cargo, &["auditable"]) {
+        eprintln!("error: cargo-auditable is not installed.");
+        eprintln!("Install it with `cargo install --locked cargo-auditable`;");
+        eprintln!("see docs/development.md.");
+        return Ok(ExitCode::FAILURE);
+    }
+
+    let profile = if args.release { "release" } else { "debug" };
+    let mut build = Command::new(&cargo);
+    build
+        .current_dir(&root)
+        .args([
+            "auditable",
+            "zigbuild",
+            "--locked",
+            "--package",
+            OPERATOR_BIN,
+        ])
+        .args(["--bin", OPERATOR_BIN, "--target", args.target])
+        // Strip symbols in both profiles so the artifact is always stripped.
+        .env("CARGO_PROFILE_RELEASE_STRIP", "symbols")
+        .env("CARGO_PROFILE_DEV_STRIP", "symbols");
+    if args.release {
+        build.arg("--release");
+    }
+    if !build.status()?.success() {
+        return Ok(ExitCode::FAILURE);
+    }
+
+    let artifact = root
+        .join("target")
+        .join(args.target)
+        .join(profile)
+        .join(OPERATOR_BIN);
+    let out_dir = root.join("target").join("dist").join(args.arch);
+    fs::create_dir_all(&out_dir)?;
+    let out = out_dir.join(OPERATOR_BIN);
+    fs::copy(&artifact, &out)?;
+    println!(
+        "wrote {}",
+        out.strip_prefix(&root).unwrap_or(&out).display()
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
 fn run() -> Result<ExitCode, BoxError> {
     let args: Vec<String> = env::args().skip(1).collect();
     match args
@@ -72,8 +199,19 @@ fn run() -> Result<ExitCode, BoxError> {
     {
         ["crdgen"] => crdgen(false),
         ["crdgen", "--check"] => crdgen(true),
+        ["dist", rest @ ..] => match parse_dist_args(rest) {
+            Ok(parsed) => dist(&parsed),
+            Err(message) => {
+                eprintln!("error: {message}");
+                eprintln!("usage: cargo xtask dist --target <triple> [--release]");
+                Ok(ExitCode::from(2))
+            }
+        },
+        ["chart-test"] => chart::chart_test(),
         _ => {
             eprintln!("usage: cargo xtask crdgen [--check]");
+            eprintln!("       cargo xtask dist --target <triple> [--release]");
+            eprintln!("       cargo xtask chart-test");
             Ok(ExitCode::from(2))
         }
     }
@@ -93,6 +231,31 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
     use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
+
+    #[test]
+    fn dist_args_map_targets_to_architectures() {
+        let amd = parse_dist_args(&["--target", "x86_64-unknown-linux-musl", "--release"])
+            .expect("amd64");
+        assert_eq!(
+            amd,
+            DistArgs {
+                target: "x86_64-unknown-linux-musl",
+                arch: "amd64",
+                release: true
+            }
+        );
+        let arm = parse_dist_args(&["--target=aarch64-unknown-linux-musl"]).expect("arm64");
+        assert_eq!(arm.arch, "arm64");
+        assert!(!arm.release);
+    }
+
+    #[test]
+    fn dist_args_reject_bad_input() {
+        assert!(parse_dist_args(&[]).is_err());
+        assert!(parse_dist_args(&["--target"]).is_err());
+        assert!(parse_dist_args(&["--target", "aarch64-apple-darwin"]).is_err());
+        assert!(parse_dist_args(&["--target", "x86_64-unknown-linux-musl", "--bogus"]).is_err());
+    }
 
     #[test]
     fn rendered_crd_is_deterministic() {

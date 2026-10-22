@@ -1,0 +1,24 @@
+{{- /* SPDX-License-Identifier: Apache-2.0 */ -}}
+SecretSpec Operator {{ .Chart.AppVersion }} is installed in namespace {{ .Release.Namespace }}.
+
+{{- if empty .Values.watchNamespaces }}
+
+Scope: all namespaces (ClusterRole).
+{{- else }}
+
+Scope: only these namespaces: {{ join ", " .Values.watchNamespaces }}.
+SecretSpecs in any other namespace are ignored.
+{{- end }}
+
+Check the operator:
+
+  kubectl --namespace {{ .Release.Namespace }} get deployment {{ include "secretspec-operator.fullname" . }}
+
+Create a SecretSpec, then read the generated Secret:
+
+  kubectl get secretspecs --all-namespaces
+{{- if and .Values.crds.install .Values.crds.keep }}
+
+The CRD is kept on `helm uninstall` (crds.keep=true). Deleting the CRD
+deletes every SecretSpec in the cluster.
+{{- end }}

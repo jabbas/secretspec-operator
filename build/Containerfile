@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Runtime image: the prebuilt static musl binary on distroless `static`.
+# Build the binaries first (`cargo xtask dist --target <triple> --release`);
+# see docs/development.md, "Building the image".
+
+# Base pinned by digest (multi-arch index of static-debian12:nonroot).
+# Renovate keeps the digest current.
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+
+# Re-declared: build args are only visible in the stage that declares them.
+ARG TARGETARCH
+ARG VERSION=dev
+ARG REVISION=unknown
+
+LABEL org.opencontainers.image.title="secretspec-operator" \
+      org.opencontainers.image.description="Kubernetes operator that generates and keeps Secrets from declarative SecretSpec resources." \
+      org.opencontainers.image.source="https://github.com/jabbas/secretspec-operator" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}"
+
+COPY target/dist/${TARGETARCH}/secretspec-operator /secretspec-operator
+# Licence and notices of this project. Licences of the bundled third-party
+# crates are not shipped yet (they are listed in the SBOM).
+COPY LICENSE NOTICE /licenses/
+
+USER 65532:65532
+ENTRYPOINT ["/secretspec-operator"]

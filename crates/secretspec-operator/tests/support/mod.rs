@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use k8s_openapi::ByteString;
 use k8s_openapi::api::coordination::v1::Lease;
 use k8s_openapi::api::core::v1::{Namespace, Secret, ServiceAccount};
 use k8s_openapi::api::events::v1::Event;
@@ -241,12 +242,16 @@ fn operator_rules(secret_verbs: &[&str]) -> Vec<PolicyRule> {
     ]
 }
 
-fn lease_rules() -> Vec<PolicyRule> {
-    vec![rule(
-        "coordination.k8s.io",
-        &["leases"],
-        &["get", "create", "update"],
-    )]
+/// The chart's lease rules: `get`/`update` only on the operator's own Lease
+/// (`lease_name`), and `create`, which cannot be limited by name.
+fn lease_rules(lease_name: &str) -> Vec<PolicyRule> {
+    vec![
+        PolicyRule {
+            resource_names: Some(vec![lease_name.to_owned()]),
+            ..rule("coordination.k8s.io", &["leases"], &["get", "update"])
+        },
+        rule("coordination.k8s.io", &["leases"], &["create"]),
+    ]
 }
 
 async fn apply<K>(api: &Api<K>, name: &str, object: &K)
@@ -362,7 +367,8 @@ impl Env {
             },
         )
         .await;
-        self.apply_role(ROLE_LEASE, lease_rules()).await;
+        self.apply_role(ROLE_LEASE, lease_rules(&self.lease_name()))
+            .await;
         self.set_secret_verbs(SECRET_VERBS).await;
         match self.rbac {
             Rbac::Cluster => {
@@ -390,12 +396,14 @@ impl Env {
         // RBAC is enforced from an informer cache; wait until it took effect.
         let specs: Api<SecretSpec> = Api::namespaced(self.operator_client.clone(), &self.ns_a);
         let leases: Api<Lease> = Api::namespaced(self.operator_client.clone(), &self.ns_a);
+        let lease_name = self.lease_name();
         wait_until("operator RBAC to take effect", || {
             let specs = specs.clone();
             let leases = leases.clone();
+            let lease_name = lease_name.clone();
             async move {
                 let ok = specs.list(&ListParams::default()).await.is_ok()
-                    && leases.get_opt("probe").await.is_ok();
+                    && leases.get_opt(&lease_name).await.is_ok();
                 ok.then_some(())
             }
         })
@@ -779,6 +787,47 @@ where
             "timed out after {timeout:?} waiting for {what}"
         );
         tokio::time::sleep(POLL).await;
+    }
+}
+
+/// Values shorter than this are not checked against the logs: they are
+/// literal, non-secret values (the `admin` username) that may well occur in
+/// unrelated log text.
+const MIN_CHECKED_LEN: usize = 8;
+
+/// The strings that would betray `value` in a log: its UTF-8 text (and, for
+/// multi-line values such as PEM keys, each long line) and its base64 form.
+pub fn leak_needles(value: &ByteString) -> Vec<String> {
+    let mut needles = Vec::new();
+    if value.0.len() < MIN_CHECKED_LEN {
+        return needles;
+    }
+    if let Ok(text) = std::str::from_utf8(&value.0) {
+        needles.push(text.to_owned());
+        needles.extend(
+            text.lines()
+                .map(str::trim)
+                .filter(|line| line.len() >= 16 && !line.starts_with("-----"))
+                .map(str::to_owned),
+        );
+    }
+    match serde_json::to_value(value).expect("ByteString serialises") {
+        Value::String(base64) => needles.push(base64),
+        other => panic!("ByteString is not a string: {other}"),
+    }
+    needles
+}
+
+/// Asserts that no value of `secret` occurs in `logs`.
+pub fn assert_not_logged(secret: &Secret, logs: &str) {
+    let name = secret.name_any();
+    for (key, value) in secret.data.iter().flatten() {
+        for needle in leak_needles(value) {
+            assert!(
+                !logs.contains(&needle),
+                "{name}/{key}: a generated value appears in the operator logs"
+            );
+        }
     }
 }
 

@@ -13,7 +13,8 @@
 //! - **Renew** every [`RENEW_PERIOD`] with `update` and the `resourceVersion`
 //!   of our last write. If no renewal succeeds within [`RENEW_DEADLINE`]
 //!   (counted from when the last successful request was *sent*), or
-//!   the Lease names another holder, leadership is lost: the work is dropped
+//!   the Lease names another holder or was deleted (`404`), leadership is
+//!   lost: the work is dropped
 //!   and an error is returned (the process exits non-zero and restarts).
 //! - **Release** (holder cleared) when the work finishes, so a successor can
 //!   take over without waiting for expiry.
@@ -54,6 +55,8 @@ const _: () = assert!(
 
 /// HTTP status of an optimistic-concurrency or create race.
 const HTTP_CONFLICT: u16 = 409;
+/// HTTP status of a missing object.
+const HTTP_NOT_FOUND: u16 = 404;
 
 /// Waits until this instance holds the Lease `lease_ns/lease_name` as
 /// `holder`, then runs `work` while keeping the Lease renewed.
@@ -81,15 +84,37 @@ where
 
     let work = pin!(work);
     let keep = pin!(keep(&api, lease_name, holder, lease, tenure));
-    match futures::future::select(work, keep).await {
-        futures::future::Either::Left((result, _)) => {
-            release(&api, lease_name, holder).await;
-            result
-        }
-        futures::future::Either::Right((lost, _)) => {
+    match race(keep, work).await {
+        Ended::Lost(lost) => {
             tracing::error!(lease = lease_name, holder, reason = %lost, "lost leadership");
             Err(lost)
         }
+        Ended::Finished(result) => {
+            release(&api, lease_name, holder).await;
+            result
+        }
+    }
+}
+
+/// How the leadership phase ended.
+enum Ended {
+    /// Leadership was lost first; the work is dropped.
+    Lost(anyhow::Error),
+    /// The work finished first.
+    Finished(anyhow::Result<()>),
+}
+
+/// Runs the lease keeper against the work. The keeper is polled *first*: when
+/// the process stalled past the renew deadline, the keeper notices on the next
+/// poll and wins, so the work cannot slip in a write after leadership ended.
+async fn race<K, W>(keep: K, work: W) -> Ended
+where
+    K: Future<Output = anyhow::Error> + Unpin,
+    W: Future<Output = anyhow::Result<()>> + Unpin,
+{
+    match futures::future::select(keep, work).await {
+        futures::future::Either::Left((lost, _)) => Ended::Lost(lost),
+        futures::future::Either::Right((result, _)) => Ended::Finished(result),
     }
 }
 
@@ -212,6 +237,9 @@ async fn keep(
             Ok(Ok(Renewal::Lost(other))) => {
                 return anyhow::anyhow!("lease {name} is now held by {other:?}");
             }
+            Ok(Ok(Renewal::Deleted)) => {
+                return anyhow::anyhow!("lease {name} was deleted");
+            }
             Ok(Err(err)) => {
                 tracing::warn!(lease = name, error = %kube_error_summary(&err), "lease renewal failed; retrying");
                 next = Instant::now() + RENEW_RETRY;
@@ -224,9 +252,29 @@ async fn keep(
 enum Renewal {
     Renewed(Box<Lease>),
     Lost(String),
+    /// The Lease no longer exists (404): another candidate may create it at
+    /// any moment, so this counts as lost leadership straight away.
+    Deleted,
+}
+
+/// Maps a 404 to [`Renewal::Deleted`]; everything else passes through.
+fn deleted_as_lost(result: Result<Renewal, kube::Error>) -> Result<Renewal, kube::Error> {
+    match result {
+        Err(kube::Error::Api(status)) if status.code == HTTP_NOT_FOUND => Ok(Renewal::Deleted),
+        other => other,
+    }
 }
 
 async fn renew(
+    api: &Api<Lease>,
+    name: &str,
+    holder: &str,
+    ours: &Lease,
+) -> Result<Renewal, kube::Error> {
+    deleted_as_lost(renew_once(api, name, holder, ours).await)
+}
+
+async fn renew_once(
     api: &Api<Lease>,
     name: &str,
     holder: &str,
@@ -543,6 +591,38 @@ mod tests {
         let mut tenure = Tenure::new(start + Duration::from_secs(5));
         tenure.renewed(start);
         assert_eq!(tenure.last_renew, start + Duration::from_secs(5));
+    }
+
+    fn api_error(code: u16, reason: &str) -> kube::Error {
+        kube::Error::Api(Box::new(kube::core::Status {
+            code,
+            reason: reason.to_owned(),
+            ..kube::core::Status::default()
+        }))
+    }
+
+    #[test]
+    fn a_deleted_lease_is_lost_leadership() {
+        let deleted = deleted_as_lost(Err(api_error(404, "NotFound")));
+        assert!(matches!(deleted, Ok(Renewal::Deleted)));
+        // Other failures stay retryable errors; successes pass through.
+        let other = deleted_as_lost(Err(api_error(500, "InternalError")));
+        assert!(matches!(other, Err(kube::Error::Api(s)) if s.code == 500));
+        let lost = deleted_as_lost(Ok(Renewal::Lost("x".to_owned())));
+        assert!(matches!(lost, Ok(Renewal::Lost(_))));
+    }
+
+    #[tokio::test]
+    async fn the_keeper_wins_a_tie_with_the_work() {
+        // Both ready at once (a stall past the deadline): leadership loss
+        // must win, so the work cannot write after it ended.
+        let keep = std::pin::pin!(std::future::ready(anyhow::anyhow!("not renewed")));
+        let work = std::pin::pin!(std::future::ready(Ok(())));
+        assert!(matches!(race(keep, work).await, Ended::Lost(_)));
+
+        let keep = std::pin::pin!(std::future::pending::<anyhow::Error>());
+        let work = std::pin::pin!(std::future::ready(Ok(())));
+        assert!(matches!(race(keep, work).await, Ended::Finished(Ok(()))));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-version = "0.0.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -14,4 +14,5 @@ workspace = true
 secretspec-api = { path = "../crates/secretspec-api" }
 kube.workspace = true
 k8s-openapi.workspace = true
+serde.workspace = true
 serde_norway.workspace = true
