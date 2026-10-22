@@ -82,7 +82,9 @@ pub use status::{SecretKind, SecretSpecStatus};
     printcolumn(name = "Kind", type_ = "string", json_path = ".status.kind"),
     printcolumn(
         name = "Next Rotation",
-        type_ = "date",
+        // `string`, not `date`: kubectl renders `date` as an age, which is
+        // negative (`<invalid>`) for a time in the future.
+        type_ = "string",
         json_path = ".status.nextRotationTime"
     ),
     printcolumn(
