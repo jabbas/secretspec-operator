@@ -242,12 +242,16 @@ fn operator_rules(secret_verbs: &[&str]) -> Vec<PolicyRule> {
     ]
 }
 
-fn lease_rules() -> Vec<PolicyRule> {
-    vec![rule(
-        "coordination.k8s.io",
-        &["leases"],
-        &["get", "create", "update"],
-    )]
+/// The chart's lease rules: `get`/`update` only on the operator's own Lease
+/// (`lease_name`), and `create`, which cannot be limited by name.
+fn lease_rules(lease_name: &str) -> Vec<PolicyRule> {
+    vec![
+        PolicyRule {
+            resource_names: Some(vec![lease_name.to_owned()]),
+            ..rule("coordination.k8s.io", &["leases"], &["get", "update"])
+        },
+        rule("coordination.k8s.io", &["leases"], &["create"]),
+    ]
 }
 
 async fn apply<K>(api: &Api<K>, name: &str, object: &K)
@@ -363,7 +367,8 @@ impl Env {
             },
         )
         .await;
-        self.apply_role(ROLE_LEASE, lease_rules()).await;
+        self.apply_role(ROLE_LEASE, lease_rules(&self.lease_name()))
+            .await;
         self.set_secret_verbs(SECRET_VERBS).await;
         match self.rbac {
             Rbac::Cluster => {
@@ -391,12 +396,14 @@ impl Env {
         // RBAC is enforced from an informer cache; wait until it took effect.
         let specs: Api<SecretSpec> = Api::namespaced(self.operator_client.clone(), &self.ns_a);
         let leases: Api<Lease> = Api::namespaced(self.operator_client.clone(), &self.ns_a);
+        let lease_name = self.lease_name();
         wait_until("operator RBAC to take effect", || {
             let specs = specs.clone();
             let leases = leases.clone();
+            let lease_name = lease_name.clone();
             async move {
                 let ok = specs.list(&ListParams::default()).await.is_ok()
-                    && leases.get_opt("probe").await.is_ok();
+                    && leases.get_opt(&lease_name).await.is_ok();
                 ok.then_some(())
             }
         })
