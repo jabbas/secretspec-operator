@@ -5,6 +5,7 @@
 mod chart;
 
 use std::error::Error;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::{env, fs};
@@ -117,22 +118,36 @@ fn parse_dist_args(args: &[&str]) -> Result<DistArgs, String> {
     })
 }
 
-/// Builds a static musl operator binary with cargo-zigbuild and places it at
-/// `target/dist/<arch>/secretspec-operator`, stripped.
+/// Whether `cargo <subcommand> --help` succeeds, i.e. the subcommand exists.
+fn cargo_subcommand_available(cargo: &OsStr, subcommand: &[&str]) -> bool {
+    Command::new(cargo)
+        .args(subcommand)
+        .arg("--help")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// Builds a static musl operator binary with cargo-zigbuild, through
+/// cargo-auditable (the dependency list is embedded in the binary, so SBOM
+/// and vulnerability scanners see the crates), and places it at
+/// `target/dist/<arch>/secretspec-operator`, stripped. The embedded list
+/// survives stripping.
 fn dist(args: &DistArgs) -> Result<ExitCode, BoxError> {
     let root = workspace_root()?;
     let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
 
-    let available = Command::new(&cargo)
-        .args(["zigbuild", "--help"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success());
-    if !available {
+    if !cargo_subcommand_available(&cargo, &["zigbuild"]) {
         eprintln!("error: cargo-zigbuild is not installed.");
         eprintln!("Install it with `cargo install --locked cargo-zigbuild`, plus zig");
         eprintln!("(for example `pip install ziglang`); see docs/development.md.");
+        return Ok(ExitCode::FAILURE);
+    }
+    if !cargo_subcommand_available(&cargo, &["auditable"]) {
+        eprintln!("error: cargo-auditable is not installed.");
+        eprintln!("Install it with `cargo install --locked cargo-auditable`;");
+        eprintln!("see docs/development.md.");
         return Ok(ExitCode::FAILURE);
     }
 
@@ -140,7 +155,13 @@ fn dist(args: &DistArgs) -> Result<ExitCode, BoxError> {
     let mut build = Command::new(&cargo);
     build
         .current_dir(&root)
-        .args(["zigbuild", "--locked", "--package", OPERATOR_BIN])
+        .args([
+            "auditable",
+            "zigbuild",
+            "--locked",
+            "--package",
+            OPERATOR_BIN,
+        ])
         .args(["--bin", OPERATOR_BIN, "--target", args.target])
         // Strip symbols in both profiles so the artifact is always stripped.
         .env("CARGO_PROFILE_RELEASE_STRIP", "symbols")

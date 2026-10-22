@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# zig for cargo-zigbuild in CI and release builds, installed with
+# `pip install --require-hashes -r`. The hash is the linux x86_64 wheel on
+# PyPI (the runners are ubuntu-24.04 x86_64). Bump version and hash together,
+# and keep docs/development.md ("Building the image") in step.
+ziglang==0.17.0 \
+    --hash=sha256:97079827064a7492cce5541ceb438ae8003ce1e54e399676da2d62fb7a5dc08b

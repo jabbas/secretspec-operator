@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+#
 # Signed release workflow. Runs only for tags `vX.Y.Z` and `vX.Y.Z-rc.N`.
 #
 #   verify -> build -> image -> smoke -> chart -> release
@@ -140,11 +142,14 @@ jobs:
       # Same toolchain as docs/development.md ("Building the image").
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
-          tool: cargo-zigbuild@0.23.4
+          # cargo-auditable embeds the dependency list in the binary, so the
+          # SBOM and the vulnerability scan see the crates, not only the
+          # distroless packages.
+          tool: cargo-zigbuild@0.23.4,cargo-auditable@0.7.7
       - name: Install zig
         run: |
           python3 -m venv "$RUNNER_TEMP/zig-venv"
-          "$RUNNER_TEMP/zig-venv/bin/pip" install ziglang==0.17.0
+          "$RUNNER_TEMP/zig-venv/bin/pip" install --require-hashes -r .github/requirements/ziglang.txt
           echo "$RUNNER_TEMP/zig-venv/bin" >> "$GITHUB_PATH"
       - name: Build amd64
         run: cargo xtask dist --target x86_64-unknown-linux-musl --release
@@ -217,6 +222,9 @@ jobs:
           done
           echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          # BuildKit v0.34.1, pinned by index digest.
+          driver-opts: image=moby/buildkit@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -299,6 +307,14 @@ jobs:
           syft "registry:$IMAGE@$DIGEST_AMD64" -o "spdx-json=sbom/secretspec-operator-${TAG}-linux-amd64.spdx.json"
           syft "registry:$IMAGE@$DIGEST_ARM64" -o "spdx-json=sbom/secretspec-operator-${TAG}-linux-arm64.spdx.json"
           ls -l sbom
+          # The binary is built with cargo-auditable: each SBOM must list the
+          # Rust crates (pkg:cargo/...) next to the distroless packages. A
+          # build that lost the embedded data would otherwise go unnoticed.
+          for sbom in sbom/*.spdx.json; do
+            crates="$(jq '[.packages[] | select(any(.externalRefs[]?; (.referenceLocator // "") | startswith("pkg:cargo/")))] | length' "$sbom")"
+            echo "$sbom: $crates Rust crates"
+            test "$crates" -ge 100
+          done
       # Signatures: the index (what a tag resolves to, and what `cosign verify
       # <image>:<tag>` checks) and each platform manifest. The SBOM
       # attestation goes on the platform manifests, because an SBOM describes
@@ -455,6 +471,10 @@ jobs:
             echo "published=true" >> "$GITHUB_OUTPUT"
             echo "digest=$digest" >> "$GITHUB_OUTPUT"
           else
+            # helm's stderr only (no credentials, no secret data): shows how
+            # the registry really answered for a package that is not there.
+            echo "--- pull.log ---"
+            cat pull.log
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
       # The committed Chart.yaml keeps the workspace version; the release
@@ -492,10 +512,13 @@ jobs:
           # a misread access error.
           mkdir recheck
           chart_resolve "$CHART_REPO/secretspec-operator" "$VERSION" recheck recheck.log
+          echo "chart recheck: $CHART_STATE"
           if [[ "$CHART_STATE" == found ]]; then
             echo "::error::chart $VERSION exists in the registry; not pushing over it. Re-run the failed jobs to resume with it."
             exit 1
           fi
+          echo "--- recheck.log ---"
+          cat recheck.log
           helm push "chart/secretspec-operator-${VERSION}.tgz" "$CHART_REPO" 2>&1 | tee push.log
           digest="$(awk '/^Digest:/ {print $2}' push.log)"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
@@ -570,6 +593,26 @@ jobs:
           args=(--repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG"
                 --notes-file notes.md --generate-notes)
           if [[ "$PRERELEASE" == "true" ]]; then
+            # A release candidate: the notes cover the changes since the
+            # previous tag, whatever it is (GitHub's default).
             args+=(--prerelease)
+          else
+            # A final release: the notes cover everything since the previous
+            # FINAL tag, so the release candidates in between are included.
+            # The first final release has no start tag: the notes then cover
+            # the whole history.
+            previous="$(
+              {
+                gh api --paginate "repos/$GITHUB_REPOSITORY/tags" --jq '.[].name' \
+                  | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true
+                echo "$TAG"
+              } | sort -uV | grep -B1 -x -F "$TAG" | head -n 1
+            )"
+            if [[ -n "$previous" && "$previous" != "$TAG" ]]; then
+              echo "release notes since the previous final tag $previous"
+              args+=(--notes-start-tag "$previous")
+            else
+              echo "no previous final tag; the release notes cover the whole history"
+            fi
           fi
           gh release create "$TAG" "${args[@]}" assets/*

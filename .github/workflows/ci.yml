@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 name: CI
 
 on:
@@ -85,7 +86,9 @@ jobs:
           node_image: ${{ matrix.node_image }}
           wait: 120s
       - name: Export kubeconfig
-        run: kind get kubeconfig --name "secretspec-api-${{ matrix.kubernetes }}" > "$RUNNER_TEMP/kubeconfig"
+        env:
+          CLUSTER: secretspec-api-${{ matrix.kubernetes }}
+        run: kind get kubeconfig --name "$CLUSTER" > "$RUNNER_TEMP/kubeconfig"
       - name: Server-side validation
         env:
           SECRETSPEC_TEST_KUBECONFIG: ${{ runner.temp }}/kubeconfig
@@ -115,7 +118,9 @@ jobs:
           node_image: ${{ matrix.node_image }}
           wait: 120s
       - name: Export kubeconfig
-        run: kind get kubeconfig --name "secretspec-operator-${{ matrix.kubernetes }}" > "$RUNNER_TEMP/kubeconfig"
+        env:
+          CLUSTER: secretspec-operator-${{ matrix.kubernetes }}
+        run: kind get kubeconfig --name "$CLUSTER" > "$RUNNER_TEMP/kubeconfig"
       - name: Operator integration tests
         env:
           SECRETSPEC_TEST_KUBECONFIG: ${{ runner.temp }}/kubeconfig
@@ -136,8 +141,10 @@ jobs:
           - kubernetes: "1.37"
             node_image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
     name: e2e (Kubernetes ${{ matrix.kubernetes }})
+    timeout-minutes: 45
     env:
       SECRETSPEC_E2E_IMAGE: localhost/secretspec-operator:e2e
+      CLUSTER: secretspec-e2e-${{ matrix.kubernetes }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
@@ -146,15 +153,18 @@ jobs:
       # Same toolchain as docs/development.md ("Building the image").
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
-          tool: cargo-zigbuild@0.23.4
+          tool: cargo-zigbuild@0.23.4,cargo-auditable@0.7.7
       - name: Install zig
         run: |
           python3 -m venv "$RUNNER_TEMP/zig-venv"
-          "$RUNNER_TEMP/zig-venv/bin/pip" install ziglang==0.17.0
+          "$RUNNER_TEMP/zig-venv/bin/pip" install --require-hashes -r .github/requirements/ziglang.txt
           echo "$RUNNER_TEMP/zig-venv/bin" >> "$GITHUB_PATH"
       - name: Build the static binary
         run: cargo xtask dist --target x86_64-unknown-linux-musl --release
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          # BuildKit v0.34.1, pinned by index digest.
+          driver-opts: image=moby/buildkit@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
       - name: Build the image
         run: |
           docker buildx build --load --platform linux/amd64 \
@@ -166,17 +176,30 @@ jobs:
       - uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
         with:
           version: v0.33.0
-          cluster_name: secretspec-e2e-${{ matrix.kubernetes }}
+          cluster_name: ${{ env.CLUSTER }}
           node_image: ${{ matrix.node_image }}
           wait: 120s
       - name: Load the image into kind
-        run: kind load docker-image "$SECRETSPEC_E2E_IMAGE" --name "secretspec-e2e-${{ matrix.kubernetes }}"
+        run: kind load docker-image "$SECRETSPEC_E2E_IMAGE" --name "$CLUSTER"
       - name: Export kubeconfig
-        run: kind get kubeconfig --name "secretspec-e2e-${{ matrix.kubernetes }}" > "$RUNNER_TEMP/kubeconfig"
+        run: kind get kubeconfig --name "$CLUSTER" > "$RUNNER_TEMP/kubeconfig"
       - name: End-to-end tests
         env:
           SECRETSPEC_E2E_KUBECONFIG: ${{ runner.temp }}/kubeconfig
         run: cargo test -p secretspec-operator --test e2e -- --ignored --test-threads=1
+      # Diagnostics for a failed run. No Secret is read: only pods, operator
+      # logs (which never contain values), SecretSpecs and events.
+      - name: Dump diagnostics
+        if: failure()
+        env:
+          KUBECONFIG: ${{ runner.temp }}/kubeconfig
+        run: |
+          kubectl get pods --all-namespaces -o wide || true
+          kubectl --namespace secretspec-system describe pods || true
+          kubectl --namespace secretspec-system logs --selector app.kubernetes.io/name=secretspec-operator --all-containers --tail=500 --prefix || true
+          kubectl --namespace secretspec-system logs --selector app.kubernetes.io/name=secretspec-operator --all-containers --previous --tail=200 --prefix || true
+          kubectl get secretspecs --all-namespaces -o wide || true
+          kubectl get events --all-namespaces --sort-by=.lastTimestamp || true
 
   deny:
     runs-on: ubuntu-24.04

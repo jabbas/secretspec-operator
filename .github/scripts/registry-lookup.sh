@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
 # Registry lookups for release.yml (sourced, not executed). They decide whether
 # a release tag / chart version already exists, so that no re-run can ever
 # change what it points to. Everything ambiguous fails: only an explicit
@@ -13,18 +15,24 @@
 #            found". Use it where the repository certainly exists and the
 #            result is followed by a write (setting the tag).
 #   lenient  Additionally absent on NAME_UNKNOWN and on access errors
-#            (denied / unauthorized): a package that was never pushed may be
-#            answered that way. Only use it where a wrong "absent" cannot
-#            lead to a write to the tag.
+#            (denied / unauthorized / "403 Forbidden"): a package that was
+#            never pushed may be answered that way. Only use it where a wrong
+#            "absent" cannot lead to a write to the tag.
+#
+# When the answer is "absent", the registry's own words (stderr of the
+# lookup, never a secret) are printed to stderr, so the first run shows how
+# the registry really answers.
 tag_digest() {
   local ref="$1" mode="$2" out err
   err="$(mktemp)"
   if out="$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' 2> "$err")"; then
     jq -er '.digest' <<< "$out"
   elif grep -qE 'MANIFEST_UNKNOWN|manifest unknown|: not found' "$err"; then
-    :
-  elif [[ "$mode" == lenient ]] && grep -qiE 'NAME_UNKNOWN|name unknown|denied|unauthorized' "$err"; then
-    :
+    echo "lookup of $ref: absent (registry answer follows)" >&2
+    cat "$err" >&2
+  elif [[ "$mode" == lenient ]] && grep -qiE 'NAME_UNKNOWN|name unknown|denied|unauthorized|forbidden' "$err"; then
+    echo "lookup of $ref: taken as absent (registry answer follows)" >&2
+    cat "$err" >&2
   else
     cat "$err" >&2
     return 1
@@ -34,8 +42,9 @@ tag_digest() {
 # chart_state <oci-ref> <version> <dest-dir> <log-file>
 #
 # Pulls the chart and sets CHART_STATE to found, absent (the registry says the
-# version or the package does not exist) or denied (access error, which is
-# also how a package that was never pushed may be answered). Returns 1 for
+# version or the package does not exist) or denied (access error: denied,
+# unauthorized or 403 Forbidden, which is also how a package that was never
+# pushed may be answered). Returns 1 for
 # any other outcome. On `found` the package is in <dest-dir> and the log has
 # its "Digest:" line.
 chart_state() {
@@ -44,7 +53,7 @@ chart_state() {
     CHART_STATE=found
   elif grep -qE 'MANIFEST_UNKNOWN|manifest unknown|NAME_UNKNOWN|name unknown|: not found' "$log"; then
     CHART_STATE=absent
-  elif grep -qiE 'denied|unauthorized' "$log"; then
+  elif grep -qiE 'denied|unauthorized|forbidden' "$log"; then
     CHART_STATE=denied
   else
     cat "$log" >&2
