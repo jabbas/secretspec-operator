@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# Signed release workflow. Runs only for tags `vX.Y.Z` and `vX.Y.Z-rc.N`.
+# Signed release workflow. Runs only for tags `X.Y.Z` and `X.Y.Z-rc.N`
+# (plain semver, no `v` prefix; the legacy `v0.1.0*` tags predate this).
 #
 #   verify -> build -> image -> smoke -> chart -> release
 #
@@ -16,8 +17,8 @@ on:
     tags:
       # Glob patterns, not regular expressions. Both are re-validated with a
       # regular expression in the `verify` job.
-      - "v[0-9]+.[0-9]+.[0-9]+"
-      - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+      - "[0-9]+.[0-9]+.[0-9]+"
+      - "[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
 
 # Nothing is granted by default; every job lists what it needs. Write scopes
 # are on the jobs that push, and `id-token: write` only on the jobs that sign.
@@ -68,12 +69,12 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-rc\.[0-9]+)?$ ]]; then
-            echo "::error::tag '$TAG' is neither vX.Y.Z nor vX.Y.Z-rc.N"
+          if [[ ! "$TAG" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(-rc\.[0-9]+)?$ ]]; then
+            echo "::error::tag '$TAG' is neither X.Y.Z nor X.Y.Z-rc.N"
             exit 1
           fi
           base="${BASH_REMATCH[1]}"
-          version="${TAG#v}"
+          version="$TAG" # the tag is the version
           prerelease=false
           if [[ -n "${BASH_REMATCH[2]}" ]]; then
             prerelease=true
@@ -504,8 +505,8 @@ jobs:
           package="chart/secretspec-operator-${VERSION}.tgz"
           test "$(helm show chart "$package" | yq '.version')" = "$VERSION"
           test "$(helm show chart "$package" | yq '.appVersion')" = "$VERSION"
-          # The default image must be exactly the image pushed for this tag,
-          # with its leading `v`.
+          # The default image must be exactly the image pushed for this tag
+          # (the tag, the chart version and the appVersion are identical).
           images="$(helm template secretspec-operator "$package" \
             | yq 'select(.kind == "Deployment") | .spec.template.spec.containers[].image')"
           echo "rendered image(s): $images"
@@ -615,7 +616,9 @@ jobs:
               echo "::error::could not list the repository tags; refusing to publish notes without a start tag"
               exit 1
             fi
-            if final_tags="$(grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$all_tags")"; then
+            # Final tags are X.Y.Z and the legacy vX.Y.Z (only v0.1.0 exists);
+            # rc tags of either form do not match.
+            if final_tags="$(grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' <<<"$all_tags")"; then
               :
             elif [[ $? -eq 1 ]]; then
               final_tags="" # grep found no final tag
@@ -623,9 +626,14 @@ jobs:
               echo "::error::filtering the tag list failed"
               exit 1
             fi
+            # Sort by version, so the legacy `v` must not take part in the
+            # order: sort on "<version><TAB><tag>", then keep the tag.
             previous="$(
               { printf '%s\n' "$final_tags"; echo "$TAG"; } \
-                | sed '/^$/d' | sort -uV | grep -B1 -x -F "$TAG" | head -n 1
+                | sed '/^$/d' \
+                | while IFS= read -r t; do printf '%s\t%s\n' "${t#v}" "$t"; done \
+                | sort -t "$(printf '\t')" -k1,1V -u \
+                | cut -f2 | grep -B1 -x -F "$TAG" | head -n 1
             )"
             if [[ -n "$previous" && "$previous" != "$TAG" ]]; then
               echo "release notes since the previous final tag $previous"

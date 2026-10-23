@@ -6,12 +6,17 @@ The operator is installed with its Helm chart, published as an OCI artifact:
 oci://ghcr.io/jabbas/charts/secretspec-operator
 ```
 
-The chart version equals the operator version (`0.1.0`, `0.1.0-rc.1`, …). The
-container image is `ghcr.io/jabbas/secretspec-operator:<tag>`, built for
-`linux/amd64` and `linux/arm64`. Image tags carry a leading `v` (`v0.1.0`,
-`v0.1.0-rc.1`); there is no `latest` tag, and the chart refuses
-`image.tag=latest`. The chart's default image tag is `v<appVersion>`, so a chart
+Release tags follow [semver](https://semver.org) exactly, without a `v` prefix:
+the git tag, the chart version, the chart `appVersion` and the image tag are the
+same string (`0.1.1`, `0.1.1-rc.1`, …). The container image is
+`ghcr.io/jabbas/secretspec-operator:<tag>`, built for `linux/amd64` and
+`linux/arm64`. There is no `latest` tag, and the chart refuses
+`image.tag=latest`. The chart's default image tag is `<appVersion>`, so a chart
 always installs the image of the same release.
+
+> **Legacy tag:** `0.1.0` was released under the tag `v0.1.0` (image
+> `:v0.1.0`, signing identity `refs/tags/v0.1.0`; the chart version is still
+> `0.1.0`). Later releases use plain semver tags.
 
 ## Requirements
 
@@ -37,11 +42,12 @@ kubectl label namespace secretspec-system pod-security.kubernetes.io/enforce=res
 Releases are signed with cosign keyless signing (GitHub OIDC). The certificate
 identity is the release workflow run for the tag, so the commands below verify
 that the image and the chart were built by this repository's release workflow
-for exactly that tag. Set `TAG` to the release you are installing:
+for exactly that tag. Set `TAG` to the release you are installing; it is also
+the chart version:
 
 ```sh
-TAG=v0.1.0                 # or v0.1.0-rc.1
-CHART_VERSION="${TAG#v}"   # 0.1.0 or 0.1.0-rc.1
+TAG=0.1.1                  # or 0.1.1-rc.1
+CHART_VERSION="${TAG}"     # chart version = tag (for the legacy v0.1.0: 0.1.0)
 IDENTITY="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${TAG}"
 ISSUER="https://token.actions.githubusercontent.com"
 ```
@@ -157,7 +163,7 @@ separate `Role` there, in both modes.
 | `global.imageRegistry` | `""` | Overrides `image.registry` when set (mirror / pull-through cache). |
 | `image.registry` | `ghcr.io` | Image registry. |
 | `image.repository` | `jabbas/secretspec-operator` | Image repository. |
-| `image.tag` | `""` | Image tag; defaults to `v<appVersion>`. `latest` is rejected. |
+| `image.tag` | `""` | Image tag; defaults to `<appVersion>`. `latest` is rejected. |
 | `image.digest` | `""` | `sha256:<64 hex>`; when set it is used instead of the tag. |
 | `image.pullPolicy` | `IfNotPresent` | `Always`, `IfNotPresent` or `Never`. |
 | `imagePullSecrets` | `[]` | Passed to the pod unchanged, e.g. `[{name: mirror-pull}]`. |
@@ -197,7 +203,7 @@ The image reference is built as follows:
 
 - `<registry>/<repository>@<digest>` when `image.digest` is set;
 - otherwise `<registry>/<repository>:<tag>`, with `tag` defaulting to
-  `v<appVersion>`.
+  `<appVersion>`.
 
 `<registry>` is `global.imageRegistry` when it is non-empty, otherwise
 `image.registry`. A pull-through cache or mirror therefore needs one override;

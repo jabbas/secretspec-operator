@@ -3,7 +3,8 @@ apiVersion: v2
 name: secretspec-operator
 description: Kubernetes operator that generates and rotates Secrets from SecretSpec resources.
 type: application
-# Chart version = app version = release tag without the leading `v`.
+# Chart version = app version = image tag = git release tag (plain semver).
+# The only exception is 0.1.0, released under the legacy tag `v0.1.0`.
 version: 0.1.0
 appVersion: "0.1.0"
 home: https://github.com/jabbas/secretspec-operator

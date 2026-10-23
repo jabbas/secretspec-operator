@@ -166,8 +166,9 @@ executed. The rationale is recorded next to the ignore in `.cargo/audit.toml` an
 
 ## Release signing and SBOM
 
-Every release (`vX.Y.Z` and `vX.Y.Z-rc.N`) is built by the GitHub Actions
-workflow `.github/workflows/release.yml`, which:
+Every release (`X.Y.Z` and `X.Y.Z-rc.N`, plain semver tags without a `v`
+prefix) is built by the GitHub Actions workflow `.github/workflows/release.yml`,
+which:
 
 - runs the full test and audit gate on the tagged commit, which must be on `main`
   and match the workspace version;
@@ -227,12 +228,17 @@ check is:
 | Certificate identity | `https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/<tag>` |
 | OIDC issuer | `https://token.actions.githubusercontent.com` |
 
-Set the variables for the release you are installing (`<tag>` is `v0.1.0`, `v0.1.0-rc.1`, …; the chart
-version is the tag without the `v`):
+> **Legacy tag:** `0.1.0` was released under the tag `v0.1.0` (image
+> `:v0.1.0`, signing identity `refs/tags/v0.1.0`). Later releases use plain
+> semver tags.
+
+Set the variables for the release you are installing (`<tag>` is `0.1.1`,
+`0.1.1-rc.1`, …; the chart version is the tag. For the legacy `v0.1.0` use
+`TAG=v0.1.0` and `CHART_VERSION=0.1.0`):
 
 ```sh
-TAG=v0.1.0
-CHART_VERSION="${TAG#v}"
+TAG=0.1.1
+CHART_VERSION="${TAG}"
 IDENTITY="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${TAG}"
 ISSUER="https://token.actions.githubusercontent.com"
 ```

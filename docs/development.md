@@ -259,11 +259,18 @@ tests share one release.
 
 ## Releasing
 
-A release is a pushed annotated tag on `main`: `vX.Y.Z` or `vX.Y.Z-rc.N`.
-`.github/workflows/release.yml` does everything else; nothing is published by
-hand. The image is `ghcr.io/jabbas/secretspec-operator:<tag>` (with the `v`), the
-chart is `oci://ghcr.io/jabbas/charts/secretspec-operator` at the tag without the
-`v`. No `latest` tag exists.
+A release is a pushed annotated tag on `main`, in plain semver (semver.org, no
+`v` prefix): `X.Y.Z` or `X.Y.Z-rc.N`. `.github/workflows/release.yml` does
+everything else; nothing is published by hand. The tag, the image tag
+(`ghcr.io/jabbas/secretspec-operator:<tag>`), the chart version
+(`oci://ghcr.io/jabbas/charts/secretspec-operator`) and the chart `appVersion`
+are the same string. No `latest` tag exists.
+
+`0.1.0` is the one exception: it was released (with `0.1.0-rc.1` and
+`0.1.0-rc.2`) under the legacy tags `v0.1.0*`, image `:v0.1.0`. Those tags are
+never touched; they do not trigger the workflow, which matches only plain
+semver tags. Release notes of a final release start at the previous final tag
+of either form.
 
 ### Bump the versions
 
@@ -281,11 +288,11 @@ the release date (for the final release). Do this in a pull request and merge it
 to `main`.
 
 **Release candidates do not change any of these files.** The committed versions
-are the *final* version (`0.1.0`); the tag `v0.1.0-rc.1` is checked against it
+are the *final* version (`0.1.1`); the tag `0.1.1-rc.1` is checked against it
 (the part before `-rc.N` must equal the workspace version), and the workflow
 injects the rc version only while packaging the chart
-(`helm package --version 0.1.0-rc.1 --app-version 0.1.0-rc.1`), so the packaged
-chart installs the image `…:v0.1.0-rc.1`.
+(`helm package --version 0.1.1-rc.1 --app-version 0.1.1-rc.1`), so the packaged
+chart installs the image `…:0.1.1-rc.1`.
 
 ### Tag
 
@@ -295,12 +302,16 @@ exist.
 
 ```sh
 git switch main && git pull --ff-only
-git tag -a v0.1.0-rc.1 -m "v0.1.0-rc.1"      # release candidate
-git push origin v0.1.0-rc.1
+git tag -a 0.1.1-rc.1 -m 0.1.1-rc.1      # release candidate
+git push origin 0.1.1-rc.1
 # after the candidate has been tried out:
-git tag -a v0.1.0 -m "v0.1.0"                # final release
-git push origin v0.1.0
+git tag -a 0.1.1 -m 0.1.1                # final release
+git push origin 0.1.1
 ```
+
+Verify a published release with the commands in
+[Installation](installation.md#verify-the-release-optional-but-recommended) (the signing identity
+is `…/release.yml@refs/tags/0.1.1`, i.e. the tag itself).
 
 #### When a release run fails
 

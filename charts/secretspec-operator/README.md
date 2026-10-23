@@ -76,8 +76,9 @@ when set, else `image.registry`, so a registry mirror needs one override:
 --set 'imagePullSecrets[0].name=mirror-pull'
 ```
 
-`image.tag` defaults to `v<appVersion>` (image tags carry a `v` prefix,
-chart versions do not). `latest` is rejected.
+`image.tag` defaults to `<appVersion>`: the image tag, the chart version and
+the git release tag are the same semver string. (`0.1.0` is the one exception:
+it was released as `v0.1.0`, with the image `:v0.1.0`.) `latest` is rejected.
 
 ## Values
 
@@ -86,7 +87,7 @@ chart versions do not). `latest` is rejected.
 | `global.imageRegistry` | `""` | Overrides `image.registry` (mirror / pull-through cache). |
 | `image.registry` | `ghcr.io` | Image registry. |
 | `image.repository` | `jabbas/secretspec-operator` | Image repository. |
-| `image.tag` | `""` | Image tag; defaults to `v<appVersion>`. |
+| `image.tag` | `""` | Image tag; defaults to `<appVersion>`. |
 | `image.digest` | `""` | `sha256:…`; used instead of the tag when set. |
 | `image.pullPolicy` | `IfNotPresent` | `Always`, `IfNotPresent` or `Never`. |
 | `imagePullSecrets` | `[]` | Passed to the pod unchanged. |

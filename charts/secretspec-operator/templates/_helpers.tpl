@@ -49,8 +49,9 @@ app.kubernetes.io/part-of: secretspec-operator
 {{/*
 Image reference: "<registry>/<repository>@<digest>" when image.digest is set,
 else "<registry>/<repository>:<tag>". <registry> is global.imageRegistry when
-non-empty, else image.registry. The tag defaults to "v<appVersion>", the
-format of the published image tags.
+non-empty, else image.registry. The tag defaults to the chart appVersion
+unchanged: release tags, image tags, chart version and appVersion are the same
+semver string (no "v" prefix; only 0.1.0 was published as "v0.1.0").
 */}}
 {{- define "secretspec-operator.image" -}}
 {{- $registry := .Values.image.registry }}
@@ -58,7 +59,7 @@ format of the published image tags.
 {{- if .Values.image.digest }}
 {{- printf "%s/%s@%s" $registry .Values.image.repository .Values.image.digest }}
 {{- else }}
-{{- $tag := .Values.image.tag | default (printf "v%s" .Chart.AppVersion) }}
+{{- $tag := .Values.image.tag | default .Chart.AppVersion }}
 {{- if eq $tag "latest" }}
 {{- fail "image.tag must not be \"latest\"; use a version tag or image.digest" }}
 {{- end }}
