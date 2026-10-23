@@ -42,15 +42,19 @@ kubectl label namespace secretspec-system pod-security.kubernetes.io/enforce=res
 Releases are signed with cosign keyless signing (GitHub OIDC). The certificate
 identity is the release workflow run for the tag, so the commands below verify
 that the image and the chart were built by this repository's release workflow
-for exactly that tag. Set `TAG` to the release you are installing; it is also
-the chart version:
+for exactly that tag. Set `TAG` to the release you are installing and
+`CHART_VERSION` to its chart version. The only published release so far is
+`0.1.0`, under its legacy tag:
 
 ```sh
-TAG=0.1.1                  # or 0.1.1-rc.1
-CHART_VERSION="${TAG}"     # chart version = tag (for the legacy v0.1.0: 0.1.0)
+TAG=v0.1.0                 # the git/image tag (legacy v prefix)
+CHART_VERSION=0.1.0        # the chart version
 IDENTITY="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${TAG}"
 ISSUER="https://token.actions.githubusercontent.com"
 ```
+
+From 0.1.1 on, the tag is the plain version and equals the chart version:
+`TAG=0.1.1` and `CHART_VERSION=0.1.1` (`0.1.1-rc.1` for a release candidate).
 
 Verify the image:
 

@@ -69,14 +69,16 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          if [[ ! "$TAG" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(-rc\.[0-9]+)?$ ]]; then
-            echo "::error::tag '$TAG' is neither X.Y.Z nor X.Y.Z-rc.N"
+          # semver.org: no leading zeros. ERE has no non-capturing groups, so
+          # the groups are: 1 = base, 2-4 = its parts, 5 = the rc suffix.
+          if [[ ! "$TAG" =~ ^((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))(-rc\.(0|[1-9][0-9]*))?$ ]]; then
+            echo "::error::tag '$TAG' is neither X.Y.Z nor X.Y.Z-rc.N (semver, no leading zeros)"
             exit 1
           fi
           base="${BASH_REMATCH[1]}"
           version="$TAG" # the tag is the version
           prerelease=false
-          if [[ -n "${BASH_REMATCH[2]}" ]]; then
+          if [[ -n "${BASH_REMATCH[5]}" ]]; then
             prerelease=true
           fi
 
@@ -627,14 +629,22 @@ jobs:
               exit 1
             fi
             # Sort by version, so the legacy `v` must not take part in the
-            # order: sort on "<version><TAB><tag>", then keep the tag.
-            previous="$(
+            # order: sort on "<version><TAB><tag>", then keep the tag. Only
+            # identical lines are dropped (`sort -u` on the whole line, before
+            # the key is added), so a stray vX.Y.Z next to X.Y.Z cannot
+            # swallow $TAG; on a version tie the plain tag sorts first.
+            sorted="$(
               { printf '%s\n' "$final_tags"; echo "$TAG"; } \
-                | sed '/^$/d' \
+                | sed '/^$/d' | sort -u \
                 | while IFS= read -r t; do printf '%s\t%s\n' "${t#v}" "$t"; done \
-                | sort -t "$(printf '\t')" -k1,1V -u \
-                | cut -f2 | grep -B1 -x -F "$TAG" | head -n 1
+                | sort -t "$(printf '\t')" -k1,1V \
+                | cut -f2
             )"
+            if ! grep -qxF "$TAG" <<<"$sorted"; then
+              echo "::error::the release tag '$TAG' is missing from the sorted tag list"
+              exit 1
+            fi
+            previous="$(grep -B1 -x -F "$TAG" <<<"$sorted" | head -n 1)"
             if [[ -n "$previous" && "$previous" != "$TAG" ]]; then
               echo "release notes since the previous final tag $previous"
               args+=(--notes-start-tag "$previous")

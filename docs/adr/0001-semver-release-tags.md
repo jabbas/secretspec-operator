@@ -29,4 +29,4 @@
 - The release workflow triggers only on unprefixed tags.
 - The release-notes lookup treats both `vX.Y.Z` and `X.Y.Z` as final releases, so the 0.1.1 notes start at `v0.1.0`.
 - Tag protection rules (when added) must cover both patterns.
-- On `main`, between releases, the source-tree chart renders the next not-yet-published image tag. This is normal: installs come from the OCI chart.
+- Until the next version bump, the source-tree chart on `main` renders `:<current appVersion>` without a `v`; for 0.1.0 that image tag does not exist (0.1.0 is published only as `:v0.1.0`). This is harmless: installs come from the OCI chart, and the e2e suite overrides the image.

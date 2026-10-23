@@ -276,12 +276,18 @@ of either form.
 
 Three places carry the release version and must be equal; `cargo xtask
 chart-test` (test `chart_version_matches_workspace`) and the workflow's `verify`
-job fail otherwise:
+job fail otherwise (items 1-3; item 4 is documentation, checked by nothing):
 
 1. `version` in `[workspace.package]` of `Cargo.toml` (then `cargo build` so
    `Cargo.lock` follows);
 2. `version` in `charts/secretspec-operator/Chart.yaml`;
-3. `appVersion` in `charts/secretspec-operator/Chart.yaml` (a quoted string).
+3. `appVersion` in `charts/secretspec-operator/Chart.yaml` (a quoted string);
+4. the documentation that names the latest published release: the `TAG` and
+   `CHART_VERSION` of the verify blocks in `docs/installation.md` and
+   `docs/security.md`, and the `--version` of the install examples in
+   `README.md` and `docs/installation.md`. These are not checked by any gate;
+   update them in the release pull request, so they point at a release that
+   exists once the tag is pushed.
 
 Also replace "Unreleased" in the `CHANGELOG.md` heading of the new version with
 the release date (for the final release). Do this in a pull request and merge it
