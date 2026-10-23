@@ -586,11 +586,11 @@ fn single_image(r: &Rendered) -> Result<String, String> {
 
 fn chart_image_reference(ctx: &Ctx) -> Result<(), String> {
     let repo = "jabbas/secretspec-operator";
-    // Image tags carry a `v` prefix; the chart appVersion does not.
+    // The default image tag is the chart appVersion, unchanged (no `v`).
     ensure_eq(
         "default image",
         &single_image(&ctx.default)?,
-        &format!("ghcr.io/{repo}:v{}", ctx.app_version),
+        &format!("ghcr.io/{repo}:{}", ctx.app_version),
     )?;
     ensure_eq(
         "digest + global registry image",
@@ -621,7 +621,7 @@ fn chart_image_reference(ctx: &Ctx) -> Result<(), String> {
     )?;
 
     let digest_set = format!("image.digest={DIGEST}");
-    let digest_only = ctx.helm.render(&[&digest_set, "image.tag=v9.9.9"])?;
+    let digest_only = ctx.helm.render(&[&digest_set, "image.tag=9.9.9"])?;
     ensure_eq(
         "digest wins over tag",
         &single_image(&digest_only)?,
@@ -631,18 +631,18 @@ fn chart_image_reference(ctx: &Ctx) -> Result<(), String> {
     let mirror_only = ctx.helm.render(&[
         &mirror_set,
         "image.registry=registry.example.org",
-        "image.tag=v1.2.3",
+        "image.tag=1.2.3",
     ])?;
     ensure_eq(
         "global.imageRegistry wins over image.registry",
         &single_image(&mirror_only)?,
-        &format!("{MIRROR}/{repo}:v1.2.3"),
+        &format!("{MIRROR}/{repo}:1.2.3"),
     )?;
     let registry_only = ctx.helm.render(&["image.registry=registry.example.org"])?;
     ensure_eq(
         "image.registry override",
         &single_image(&registry_only)?,
-        &format!("registry.example.org/{repo}:v{}", ctx.app_version),
+        &format!("registry.example.org/{repo}:{}", ctx.app_version),
     )?;
     ensure_eq(
         "imagePullPolicy",

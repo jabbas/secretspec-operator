@@ -4,6 +4,17 @@ All notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Until the API leaves
 `v1alpha1`, a breaking change is always listed under its release.
 
+## Unreleased
+
+### Changed
+
+- **Release tags and image tags drop the `v` prefix from 0.1.1 on.** Releases
+  are tagged `X.Y.Z` and `X.Y.Z-rc.N` (plain semver), the image is
+  `ghcr.io/jabbas/secretspec-operator:X.Y.Z`, the signing identity is
+  `…/release.yml@refs/tags/X.Y.Z`, and the chart's default image tag is its
+  `appVersion` unchanged. `0.1.0` stays published under the legacy tag `v0.1.0`
+  (image `:v0.1.0`).
+
 ## 0.1.0 - 2026-10-23
 
 First release.

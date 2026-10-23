@@ -567,16 +567,18 @@ Everything in this section is **[architect]** unless tagged otherwise.
 
 | Property | Value |
 |---|---|
-| Reference | `ghcr.io/jabbas/secretspec-operator:vX.Y.Z` (or `:vX.Y.Z-rc.N` for a release candidate) |
+| Reference | `ghcr.io/jabbas/secretspec-operator:X.Y.Z` (or `:X.Y.Z-rc.N` for a release candidate) |
 | Platforms | `linux/amd64`, `linux/arm64` |
 | Contents | Static musl binary on distroless static `nonroot` (or `scratch`) |
 | Metadata | OCI labels |
-| Tags | Version tags only: `vX.Y.Z` and `vX.Y.Z-rc.N`. No `latest`, including for release candidates. |
+| Tags | Version tags only: `X.Y.Z` and `X.Y.Z-rc.N`, exactly the semantic version, without a `v` prefix. No `latest`, including for release candidates. |
+
+The tag format is **[owner]**; see [ADR 0001](../adr/0001-semver-release-tags.md). The only exception is the legacy `v0.1.0` release (and its release candidates), which keeps its `v`-prefixed tags.
 
 ### 10.3 Helm chart
 
 - **Location:** `charts/secretspec-operator` in this repository. Published to `oci://ghcr.io/jabbas/charts/secretspec-operator`.
-- **Version:** chart version = app version.
+- **Version:** chart version = app version = image tag, with no `v` prefix (ADR 0001). **[owner]**
 - **CRDs:** rendered as templates. The `crds/` directory MUST NOT be used, because Helm never upgrades it.
   - `crds.install: true` controls whether the CRD is rendered.
   - `crds.keep: true` adds `helm.sh/resource-policy: keep` to the CRD, so uninstalling the chart does not delete every SecretSpec.
@@ -634,11 +636,11 @@ resyncInterval: 1h
 | Trigger | Steps |
 |---|---|
 | Pull request | `fmt`, `clippy`, tests, `cargo-deny`, `cargo-audit`, crdgen diff check, `helm lint` / `helm template`, e2e on kind against Kubernetes 1.34 and the newest stable minor. |
-| Tag `vX.Y.Z` | Multi-arch build; vulnerability scan (fail on high); SBOM attestation; cosign keyless signing of the image and the chart; push image and chart; GitHub Release with notes generated from conventional commits. |
-| Tag `vX.Y.Z-rc.N` | The full tag pipeline above, unchanged: multi-arch build, scan, SBOM, cosign signing, image and chart push. The GitHub Release is marked as a *pre-release*. |
+| Tag `X.Y.Z` | Multi-arch build; vulnerability scan (fail on high); SBOM attestation; cosign keyless signing of the image and the chart; push image and chart; GitHub Release with notes generated from conventional commits. |
+| Tag `X.Y.Z-rc.N` | The full tag pipeline above, unchanged: multi-arch build, scan, SBOM, cosign signing, image and chart push. The GitHub Release is marked as a *pre-release*. |
 | Maintenance | Renovate or Dependabot for Cargo, Actions and base images. |
 
-- The release workflow triggers only on tags matching `vX.Y.Z` and `vX.Y.Z-rc.N`.
+- The release workflow triggers only on tags matching `X.Y.Z` and `X.Y.Z-rc.N` (no `v` prefix). **[owner]** The legacy `v0.1.0` tags predate this rule; see ADR 0001.
 - No `latest` tag is pushed, for either final releases or release candidates.
 
 **Verifying signatures.** Signatures are keyless. They are bound to the identity of the release workflow run for the tag:
@@ -702,10 +704,10 @@ This procedure is part of the project. It is not a production rollout.
 
 - **Cluster:** the owner's Talos home lab. Deploy directly with helm/kubectl, NOT via Flux. The deployment is disposable.
 - **Install:** namespace `test-secretspec`. Install the chart there with `watchNamespaces: [test-secretspec]`, which exercises the restricted mode.
-- **Release:** a published release candidate from ghcr (image and OCI chart), e.g. `v0.1.0-rc.1`. Using an rc also validates signing and multi-arch publishing; verify the signature with the `cosign verify` command from §10.4 before installing. **[architect]**
+- **Release:** a published release candidate from ghcr (image and OCI chart), e.g. `0.1.1-rc.1` (the legacy `v0.1.0` release candidates predate the unprefixed format; ADR 0001). Using an rc also validates signing and multi-arch publishing; verify the signature with the `cosign verify` command from §10.4 before installing. **[architect]**
 - **Who runs it:** the builder runs the procedure from the owner's workstation, which already has `kubectl` access to the home-lab cluster. The builder starts only after explicit confirmation from the owner. The owner MAY run it himself instead. **[architect]**
 - **Run:** go through the e2e scenario list (§11) manually, using the examples.
-- **Outcome:** if the rc passes, the final `vX.Y.Z` is tagged (§2). If it fails, the fix ships as the next rc (`-rc.N+1`), which repeats this procedure. **[architect]**
+- **Outcome:** if the rc passes, the final `X.Y.Z` is tagged (§2). If it fails, the fix ships as the next rc (`-rc.N+1`), which repeats this procedure. **[architect]**
 - **Teardown:**
   1. `helm uninstall`;
   2. delete the namespace;

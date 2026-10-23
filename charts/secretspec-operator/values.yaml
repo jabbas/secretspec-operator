@@ -10,7 +10,7 @@ image:
   registry: ghcr.io
   # -- Image repository within the registry.
   repository: jabbas/secretspec-operator
-  # -- Image tag; defaults to `v<chart appVersion>`. `latest` is rejected.
+  # -- Image tag; defaults to the chart appVersion (e.g. `0.1.1`). `latest` is rejected.
   tag: ""
   # -- Image digest (`sha256:...`); when set it is used instead of the tag.
   digest: ""
