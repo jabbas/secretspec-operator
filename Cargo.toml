@@ -37,6 +37,15 @@ axum = { version = "0.8", default-features = false, features = ["http1", "tokio"
 futures = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt", "ansi", "json", "env-filter"] }
 
+[profile.dev]
+debug = "line-tables-only"   # backtraces keep file:line, much smaller artifacts
+
+[profile.dev.package."*"]
+debug = 0                    # no debuginfo for dependencies
+
+[profile.test]
+debug = "line-tables-only"
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
