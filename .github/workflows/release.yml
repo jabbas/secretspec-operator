@@ -312,9 +312,14 @@ jobs:
           docker buildx imagetools inspect "$IMAGE@$INDEX_DIGEST" --raw > index.json
           jq . index.json
           test "$(jq '.manifests | length' index.json)" = 2
-          # The index carries the source annotation (see the build step).
-          jq -e '.annotations["org.opencontainers.image.source"] == "https://github.com/jabbas/secretspec-operator"' index.json > /dev/null \
-            || echo "::warning::the image index has no org.opencontainers.image.source annotation"
+          # The index carries the source annotation (see the build step). A
+          # malformed index.json already failed at `jq .` above, and a failing
+          # jq in the assignment stops the step too.
+          source="$(jq -r '.annotations["org.opencontainers.image.source"] // ""' index.json)"
+          if [[ "$source" != "https://github.com/jabbas/secretspec-operator" ]]; then
+            echo "::error::the image index has the source annotation '$source', not the repository URL"
+            exit 1
+          fi
           for arch in amd64 arm64; do
             digest="$(jq -r --arg arch "$arch" \
               '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest' index.json)"

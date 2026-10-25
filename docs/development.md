@@ -206,26 +206,40 @@ The binary embeds its dependency list (cargo-auditable); the list survives
 stripping. To check it, `syft target/dist/amd64/secretspec-operator` lists the
 Rust crates (about 270).
 
-The image also carries the licence texts of everything compiled into the
-binary, in `/licenses/`: this project's `LICENSE` and `NOTICE`, an index
-(`THIRD-PARTY-LICENSES.txt`: crate, version, SPDX expression, files) and, under
-`third-party/<crate>-<version>/`, the `LICENSE*`/`COPYING*`/`NOTICE*` files of
-each crate, copied verbatim. Generate the bundle (needs only `cargo`; it reads
-`Cargo.lock` through `cargo metadata`, so the crates must be downloadable) into
-`target/dist/licenses/` before building the image:
+The image also carries the licence texts of the third-party crates the
+operator is built from, in `/licenses/`: this project's `LICENSE` and `NOTICE`,
+an index (`THIRD-PARTY-LICENSES.txt`: crate, version, SPDX expression, files)
+and, under `third-party/<crate>-<version>/`, each crate's `LICENSE*`,
+`COPYING*`, `NOTICE*`, `UNLICENSE*` and `COPYRIGHT*` files and the contents of
+its `LICENSES/` directory, copied verbatim. Generate the bundle (needs only
+`cargo`; it reads `Cargo.lock` through `cargo tree` and `cargo metadata`, so the
+crates must be downloadable) into `target/dist/licenses/` before building the
+image:
 
 ```sh
 cargo xtask licenses
 ```
 
-The crates are the normal-dependency closure of the operator for both musl
-targets (dev- and build-only dependencies are not shipped). A crate whose
-published package has no licence file (today `cel` and the `kube` crates, whose
-licence is only in their repository) gets a generated `LICENSE-MIT` or
-`LICENSE-APACHE` with the canonical text, a note saying so, and the authors
-from its `Cargo.toml`; any other licence expression without a file makes the
-command fail so that someone reviews the crate (`fallback_license` in
-`xtask/src/licenses.rs`). `cargo deny list` is not used: its output formats
+The crates are those of `cargo tree -p secretspec-operator --edges normal` for
+both musl targets: 243 today, which includes about 20 proc-macro crates (normal
+dependencies for cargo; they run at build time and are listed anyway). Dev- and
+build-only dependencies, and features switched on only by dev-dependencies of
+other workspace members, are not included.
+
+The command is strict. For every crate it needs at least one licence file that
+is not a `NOTICE`, and the files must cover the crate's SPDX expression (each
+`AND` operand needs a text, one `OR` alternative is enough; a file matches by
+name or by content). It fails, and removes the output directory so that no
+partial bundle can be shipped, on a missing or partial set and on a licence
+identifier it does not know (extend `hints` in `xtask/src/licenses.rs`).
+
+One exception: a crate whose published package has no licence text at all gets
+a generated `LICENSE-APACHE` or `LICENSE-MIT` (canonical text, with a note at
+the top saying so, the repository and the declared authors; the MIT text has no
+invented copyright line). Today these are the five `kube` crates (`kube`,
+`kube-client`, `kube-core`, `kube-derive`, `kube-runtime`; Apache-2.0, licence
+only in their repository); the command prints the list on every run, so a new
+one is visible in the CI log. `cargo deny list` is not used: its output formats
 list licence identifiers per crate but contain no licence texts. CI runs the
 command in the `licenses` job and before the e2e image build; the release
 workflow runs it in `build`, so the bundle is part of the `dist` artifact.

@@ -223,11 +223,15 @@ image:
   one accepted advisory is explained above.
 
 **Licence texts.** The image ships `/licenses/`: this project's `LICENSE` and
-`NOTICE`, `THIRD-PARTY-LICENSES.txt` (every compiled-in crate with version and
-SPDX licence expression) and `third-party/<crate>-<version>/` with each crate's
-licence files, so the MIT and Apache-2.0 notice requirements of the bundled
-crates are met by the artifact itself. Read them without a shell (the image is
-distroless), for example with
+`NOTICE`, `THIRD-PARTY-LICENSES.txt` (every third-party crate of the operator's
+normal dependency tree, with version and SPDX licence expression) and
+`third-party/<crate>-<version>/` with each crate's licence files, so the MIT
+and Apache-2.0 notice requirements of the bundled crates are met by the
+artifact itself. The release build fails if a crate's licence files do not
+cover its declared licence. The five `kube` crates publish no licence file;
+for them the bundle holds the canonical Apache-2.0 text with a note saying it
+was generated. Read the files without a shell (the image is distroless), for
+example with
 `podman create --name x <image> && podman cp x:/licenses ./licenses && podman rm x`.
 
 The SBOM is a statement about a build, not a promise: a vulnerability published
