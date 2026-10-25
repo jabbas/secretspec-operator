@@ -59,18 +59,18 @@ Releases are signed with cosign keyless signing (GitHub OIDC). The certificate
 identity is the release workflow run for the tag, so the commands below verify
 that the image and the chart were built by this repository's release workflow
 for exactly that tag. Set `TAG` to the release you are installing and
-`CHART_VERSION` to its chart version. The only published release so far is
-`0.1.0`, under its legacy tag:
+`CHART_VERSION` to its chart version. For the current release, `0.1.1`:
 
 ```sh
-TAG=v0.1.0                 # the git/image tag (legacy v prefix)
-CHART_VERSION=0.1.0        # the chart version
+TAG=0.1.1                 # the git/image tag (plain semver)
+CHART_VERSION=0.1.1        # the chart version
 IDENTITY="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${TAG}"
 ISSUER="https://token.actions.githubusercontent.com"
 ```
 
-From 0.1.1 on, the tag is the plain version and equals the chart version:
-`TAG=0.1.1` and `CHART_VERSION=0.1.1` (`0.1.1-rc.1` for a release candidate).
+From 0.1.1 on, the tag is the plain version and equals the chart version
+(`0.1.1-rc.1` for a release candidate). For the legacy `0.1.0` use
+`TAG=v0.1.0` and `CHART_VERSION=0.1.0`.
 
 Verify the image:
 
@@ -118,7 +118,7 @@ Cluster mode, a single replica:
 ```sh
 helm install secretspec-operator \
   oci://ghcr.io/jabbas/charts/secretspec-operator \
-  --version 0.1.0 \
+  --version 0.1.1 \
   --namespace secretspec-system --create-namespace
 ```
 
@@ -128,7 +128,7 @@ For a highly available deployment, run two replicas; they use leader election
 ```sh
 helm install secretspec-operator \
   oci://ghcr.io/jabbas/charts/secretspec-operator \
-  --version 0.1.0 \
+  --version 0.1.1 \
   --namespace secretspec-system --create-namespace \
   --set replicas=2
 ```
@@ -161,7 +161,7 @@ namespace first if you want `restricted` enforcement (see
 helm repo add jabbas https://jabbas.github.io/helm-charts
 helm repo update
 helm install secretspec-operator jabbas/secretspec-operator \
-  --version 0.1.0 \
+  --version 0.1.1 \
   --namespace secretspec-system --create-namespace
 ```
 
@@ -192,9 +192,9 @@ yourself. The three digests must be identical:
 2. the SHA-256 of the package you downloaded,
 3. the `digest` of the entry in `index.yaml`.
 
-Copy-pasteable for `0.1.0` (which carries the legacy `v0.1.0` signing
-identity). For a later release set `TAG` and `CHART_VERSION` both to the plain
-version, e.g. `0.1.1`. It needs `cosign`, `crane`, `jq`, `yq`, `helm` and
+Copy-pasteable for `0.1.1`. For another release set `TAG` and `CHART_VERSION`
+both to the plain version (for the legacy `0.1.0`: `TAG=v0.1.0`,
+`CHART_VERSION=0.1.0`, signing identity `refs/tags/v0.1.0`). It needs `cosign`, `crane`, `jq`, `yq`, `helm` and
 `sha256sum` (`shasum -a 256` where `sha256sum` is missing). It runs in a
 subshell with `set -euo pipefail`, so any failing command, `cosign verify`
 included, stops it with a non-zero status and does not close your terminal:
@@ -202,8 +202,8 @@ included, stops it with a non-zero status and does not close your terminal:
 ```sh
 (
 set -euo pipefail
-TAG=v0.1.0                 # the git tag (legacy v prefix for 0.1.0 only)
-CHART_VERSION=0.1.0        # the chart version
+TAG=0.1.1                 # the git tag (plain semver)
+CHART_VERSION=0.1.1        # the chart version
 IDENTITY="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${TAG}"
 ISSUER="https://token.actions.githubusercontent.com"
 
@@ -238,7 +238,7 @@ The commands assume you ran `helm repo add jabbas …` above. A failing command
 status and an error: do not install, and please
 [report it](security.md#reporting-a-vulnerability). To install exactly the
 package you verified, use the file `helm pull` left in the current directory
-(`helm install … ./secretspec-operator-0.1.0.tgz`).
+(`helm install … ./secretspec-operator-0.1.1.tgz`).
 
 ### Flux
 
@@ -269,7 +269,7 @@ spec:
   chart:
     spec:
       chart: secretspec-operator
-      version: "0.1.0"          # pin an exact version
+      version: "0.1.1"          # pin an exact version
       sourceRef:
         kind: HelmRepository
         name: jabbas
@@ -340,7 +340,7 @@ CEL validation still apply to every namespace.
 ```sh
 helm install secretspec-operator \
   oci://ghcr.io/jabbas/charts/secretspec-operator \
-  --version 0.1.0 \
+  --version 0.1.1 \
   --namespace secretspec-system --create-namespace \
   --set 'watchNamespaces={team-a,team-b}'
 ```
@@ -409,7 +409,7 @@ The image reference is built as follows:
 ```sh
 helm install secretspec-operator \
   oci://ghcr.io/jabbas/charts/secretspec-operator \
-  --version 0.1.0 \
+  --version 0.1.1 \
   --namespace secretspec-system --create-namespace \
   --set global.imageRegistry=mirror.example.com \
   --set 'imagePullSecrets[0].name=mirror-pull'
@@ -426,7 +426,7 @@ image:
 ```sh
 helm upgrade secretspec-operator \
   oci://ghcr.io/jabbas/charts/secretspec-operator \
-  --version 0.1.0 \
+  --version 0.1.1 \
   --namespace secretspec-system \
   --reuse-values \
   --set image.digest=sha256:<64-hex-digest-from-cosign-verify>
@@ -462,7 +462,7 @@ A CRD is cluster-wide, so exactly one Helm release may own it.
   ```sh
   helm install secretspec-operator-b \
     oci://ghcr.io/jabbas/charts/secretspec-operator \
-    --version 0.1.0 \
+    --version 0.1.1 \
     --namespace secretspec-b --create-namespace \
     --set crds.install=false \
     --set 'watchNamespaces={team-b}'
@@ -503,7 +503,7 @@ back, repeat the upgrade with `--force-conflicts`:
 ```sh
 helm upgrade secretspec-operator \
   oci://ghcr.io/jabbas/charts/secretspec-operator \
-  --version 0.1.0 \
+  --version 0.1.1 \
   --namespace secretspec-system \
   --reuse-values \
   --force-conflicts
@@ -519,7 +519,7 @@ this failure mode.
 ```sh
 helm upgrade secretspec-operator \
   oci://ghcr.io/jabbas/charts/secretspec-operator \
-  --version 0.1.0 \
+  --version 0.1.1 \
   --namespace secretspec-system \
   --reuse-values
 ```
