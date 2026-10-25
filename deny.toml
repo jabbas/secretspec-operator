@@ -16,10 +16,11 @@ ignore = [
     # the operator uses only to GENERATE SSH ECDSA key pairs (ed25519, the
     # default, RSA and bcrypt do not use it). Exposed: the subtraction-based
     # `ct_lt` range check and the byte conversions on the freshly sampled secret
-    # scalar during key generation. The operator never signs, derives or
-    # decrypts. Exploiting it needs a co-resident microarchitectural timing
+    # scalar during key generation. The operator never signs, performs ECDH or
+    # decrypts; besides sampling, only the public key is computed from the
+    # secret scalar. Exploiting it needs a co-resident microarchitectural timing
     # observer during generation. Revisit when a stable ssh-key 0.7 ships.
-    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.5 (no fixed 0.5.x) only in SSH ECDSA key generation via ssh-key 0.6; the operator never signs, derives or decrypts; needs a co-resident timing observer; revisit with ssh-key 0.7" },
+    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.5 (no fixed 0.5.x) only in SSH ECDSA key generation via ssh-key 0.6; the operator never signs, performs ECDH or decrypts, and besides sampling only computes the public key from the secret scalar; needs a co-resident timing observer; revisit with ssh-key 0.7" },
 ]
 
 [licenses]

@@ -172,8 +172,9 @@ The operator has `crypto-bigint 0.5.5` through `ssh-key 0.6` →
 SSH ECDSA key pairs (`sshKeyPair.algorithm: ecdsa`); ed25519 (the default), RSA
 and bcrypt do not use it. What is exposed is the subtraction-based `ct_lt`
 range check, and the byte conversions, on the freshly sampled secret scalar
-during key generation. The operator never signs, derives or decrypts with such a
-key. Exploiting this needs a co-resident microarchitectural timing observer
+during key generation. The operator never signs, performs ECDH or decrypts with
+such a key; besides sampling, only the public key is computed from the secret
+scalar. Exploiting this needs a co-resident microarchitectural timing observer
 while the key is generated. No fixed 0.5.x release exists; the fix is in
 `crypto-bigint` 0.7.6 or later, and the ignore is revisited when a stable
 `ssh-key` 0.7 ships. If you generate ECDSA keys and consider such an observer

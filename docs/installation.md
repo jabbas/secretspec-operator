@@ -195,9 +195,13 @@ yourself. The three digests must be identical:
 Copy-pasteable for `0.1.0` (which carries the legacy `v0.1.0` signing
 identity). For a later release set `TAG` and `CHART_VERSION` both to the plain
 version, e.g. `0.1.1`. It needs `cosign`, `crane`, `jq`, `yq`, `helm` and
-`sha256sum` (`shasum -a 256` where `sha256sum` is missing):
+`sha256sum` (`shasum -a 256` where `sha256sum` is missing). It runs in a
+subshell with `set -euo pipefail`, so any failing command, `cosign verify`
+included, stops it with a non-zero status and does not close your terminal:
 
 ```sh
+(
+set -euo pipefail
 TAG=v0.1.0                 # the git tag (legacy v prefix for 0.1.0 only)
 CHART_VERSION=0.1.0        # the chart version
 IDENTITY="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${TAG}"
@@ -207,11 +211,11 @@ ISSUER="https://token.actions.githubusercontent.com"
 CHART_DIGEST="$(cosign verify "ghcr.io/jabbas/charts/secretspec-operator:${CHART_VERSION}" \
   --certificate-identity "${IDENTITY}" \
   --certificate-oidc-issuer "${ISSUER}" \
-  | jq -r '.[0].critical.image."docker-manifest-digest"')"
+  | jq -er '.[0].critical.image."docker-manifest-digest"')"
 
 # 2. The chart layer of that manifest (by digest, not by tag).
 LAYER_DIGEST="$(crane manifest "ghcr.io/jabbas/charts/secretspec-operator@${CHART_DIGEST}" \
-  | jq -r '.layers[] | select(.mediaType == "application/vnd.cncf.helm.chart.content.v1.tar+gzip") | .digest')"
+  | jq -er '.layers[] | select(.mediaType == "application/vnd.cncf.helm.chart.content.v1.tar+gzip") | .digest')"
 # Without crane: oras manifest fetch "ghcr.io/jabbas/charts/secretspec-operator@${CHART_DIGEST}" | jq ...  (same filter)
 
 # 3. The package from the HTTP repository, and the digest its index entry carries.
@@ -221,15 +225,20 @@ INDEX_DIGEST="sha256:$(curl -fsSL https://jabbas.github.io/helm-charts/index.yam
   | CHART_VERSION="${CHART_VERSION}" yq '.entries.secretspec-operator[] | select(.version == strenv(CHART_VERSION)) | .digest')"
 
 echo "layer: ${LAYER_DIGEST}"; echo "tgz:   ${TGZ_DIGEST}"; echo "index: ${INDEX_DIGEST}"
-[ "${LAYER_DIGEST}" = "${TGZ_DIGEST}" ] && [ "${LAYER_DIGEST}" = "${INDEX_DIGEST}" ] \
-  && echo "OK: the HTTP package is the signed OCI chart" || echo "MISMATCH: do not install"
+if [ "${LAYER_DIGEST}" = "${TGZ_DIGEST}" ] && [ "${LAYER_DIGEST}" = "${INDEX_DIGEST}" ]; then
+  echo "OK: the HTTP package is the signed OCI chart"
+else
+  echo "MISMATCH: do not install"; exit 1
+fi
+)
 ```
 
-The commands assume you ran `helm repo add jabbas …` above. If `cosign verify`
-fails the pipeline stops with an error; `MISMATCH` means do not install, and
-please [report it](security.md#reporting-a-vulnerability). To install exactly
-the package you verified, use the downloaded file
-(`helm install … ./secretspec-operator-${CHART_VERSION}.tgz`).
+The commands assume you ran `helm repo add jabbas …` above. A failing command
+(for example `cosign verify`) or `MISMATCH` ends the subshell with a non-zero
+status and an error: do not install, and please
+[report it](security.md#reporting-a-vulnerability). To install exactly the
+package you verified, use the file `helm pull` left in the current directory
+(`helm install … ./secretspec-operator-0.1.0.tgz`).
 
 ### Flux
 
@@ -287,6 +296,10 @@ spec:
   url: oci://ghcr.io/jabbas/charts/secretspec-operator
   ref:
     tag: "0.1.0"
+  # The Helm chart layer, passed on as the chart (needs Flux 2.3 or newer).
+  layerSelector:
+    mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+    operation: copy
   verify:
     provider: cosign
     matchOIDCIdentity:

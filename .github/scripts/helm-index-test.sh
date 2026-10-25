@@ -3,10 +3,12 @@
 #
 # Tests for helm-index.sh (the index update of the `helm-index` job in
 # release.yml). Hermetic: temporary directories and a local bare git remote,
-# no network, nothing is pushed anywhere else. Needs helm, yq (mikefarah v4)
-# and git. Run it from anywhere:
+# no network (a local HTTP server stands in for Pages), nothing is pushed
+# anywhere else. Needs helm, yq (mikefarah v4), jq, git and python3. Run it from
+# anywhere; HELM selects another helm binary:
 #
 #   bash .github/scripts/helm-index-test.sh
+#   HELM=/path/to/helm bash .github/scripts/helm-index-test.sh
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,6 +31,8 @@ V=0.1.1-rc.1
 URL_BASE="$BASE/$V"
 failures=0
 
+echo "helm: $("${HELM:-helm}" version --short)"
+
 fail() {
   echo "FAIL: $*" >&2
   failures=$((failures + 1))
@@ -37,7 +41,7 @@ pass() { echo "PASS: $*"; }
 
 # package <version>: packages the real chart at a fake version into pkg/.
 package() {
-  helm package "$chart_dir" --version "$1" --app-version "$1" --destination pkg > /dev/null
+  helm_cmd package "$chart_dir" --version "$1" --app-version "$1" --destination pkg > /dev/null
 }
 sha() { sha256sum "$1" | cut -d' ' -f1; }
 commits() { git -C remote.git rev-list --count main; }
@@ -46,12 +50,25 @@ commits() { git -C remote.git rev-list --count main; }
 # itself, so the fixture has the shape of a real index.
 mkdir seed-pkg
 for old in 0.1.0 0.1.0-rc.1; do
-  helm package "$chart_dir" --version "$old" --app-version "$old" --destination seed-pkg > /dev/null
+  helm_cmd package "$chart_dir" --version "$old" --app-version "$old" --destination seed-pkg > /dev/null
 done
 git init -q --bare -b main remote.git
 git init -q -b main seed
-helm repo index seed-pkg --url "$BASE/$V-old"
+helm_cmd repo index seed-pkg --url "$BASE/$V-old"
 cp seed-pkg/index.yaml seed/index.yaml
+# The index is shared: add what helm itself would drop or normalise. A foreign
+# chart with a valid and an invalid entry (no apiVersion, no created), unknown
+# entry fields, and unknown top-level fields.
+yq -i '
+  .annotations = {"example.com/note": "keep"}
+  | .serverInfo = {"contextPath": "/helm"}
+  | (.entries.secretspec-operator[] | select(.version == "0.1.0"))."x-unknown" = {"keep": ["me", 1]}
+  | .entries.other-chart = [
+      {"name": "other-chart", "version": "1.0.0", "apiVersion": "v2", "created": "2026-01-01T00:00:00Z",
+       "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+       "urls": ["https://example.invalid/other-1.0.0.tgz"], "x-custom": {"a": [1, 2]}},
+      {"name": "other-chart", "version": "0.9.0", "digest": "bbbb", "urls": ["https://example.invalid/other-0.9.0.tgz"]}]' seed/index.yaml
+cp seed/index.yaml seed-index.yaml
 git -C seed -c user.name=seed -c user.email=seed@example.invalid add index.yaml
 git -C seed -c user.name=seed -c user.email=seed@example.invalid commit -q -m seed
 git -C seed push -q "$work/remote.git" HEAD:main
@@ -61,7 +78,13 @@ package "$V"
 tgz="pkg/secretspec-operator-$V.tgz"
 digest="$(sha "$tgz")"
 before="$(yq '.entries.secretspec-operator | length' repo/index.yaml)"
-old_entries="$(yq -o=json -I=0 '[.entries.secretspec-operator[]] | sort_by(.version)' repo/index.yaml)"
+# The whole document as data, without the chart's version $2 and `generated`,
+# independent of the library's own comparison (jq, not yq).
+doc() {
+  yq -o=json "$1" | jq -S -c --arg v "$2" '
+    del(.generated)
+    | .entries |= with_entries(.value |= (map(select(.name != "secretspec-operator" or .version != $v)) | sort_by(.version)))'
+}
 
 # 1. A new version is added, committed by the bot, and pushed.
 f=$failures
@@ -73,8 +96,13 @@ git -C remote.git show main:index.yaml > got.yaml
 [[ "$(index_entry_digest got.yaml "$V")" == "$digest" ]] || fail "1: digest"
 [[ "$(V=$V yq '.entries.secretspec-operator[] | select(.version == strenv(V)) | .urls[0]' got.yaml)" \
   == "$URL_BASE/secretspec-operator-$V.tgz" ]] || fail "1: url"
-[[ "$(yq -o=json -I=0 '[.entries.secretspec-operator[] | select(.version != "'"$V"'")] | sort_by(.version)' got.yaml)" \
-  == "$old_entries" ]] || fail "1: old entries changed"
+[[ "$(doc got.yaml "$V")" == "$(doc seed-index.yaml "$V")" ]] || fail "1: the document changed besides the new entry"
+[[ "$(yq '.annotations."example.com/note"' got.yaml)" == keep ]] || fail "1: top-level annotations lost"
+[[ "$(yq '.serverInfo.contextPath' got.yaml)" == /helm ]] || fail "1: serverInfo lost"
+[[ "$(yq '.entries.other-chart | length' got.yaml)" == 2 ]] || fail "1: the foreign chart changed"
+[[ "$(yq '.entries.other-chart[1] | has("apiVersion")' got.yaml)" == false ]] || fail "1: a foreign entry was normalised"
+[[ "$(yq '.entries.other-chart[0]."x-custom".a[1]' got.yaml)" == 2 ]] || fail "1: unknown foreign fields lost"
+[[ "$(yq '(.entries.secretspec-operator[] | select(.version == "0.1.0"))."x-unknown".keep[0]' got.yaml)" == me ]] || fail "1: unknown entry fields lost"
 [[ "$(git -C remote.git ls-tree -r --name-only main)" == "index.yaml" ]] || fail "1: the repository must hold only index.yaml"
 [[ -z "$(find repo -name '*.tgz' -not -path 'repo/.git/*')" ]] || fail "1: a package landed in the repository"
 [[ $failures == "$f" ]] && pass "1: new version is added, committed by the bot, only index.yaml changes"
@@ -176,6 +204,75 @@ fi
 [[ "$(grep -c 'push rejected' err.txt)" == 3 ]] || fail "6: expected 3 attempts"
 grep -q 'could not push the index after 3 attempts' err.txt || fail "6: error message"
 [[ $failures == "$f" ]] && pass "6: a push that never succeeds fails after the bounded retries"
+
+rm -f repo/.git/hooks/pre-push
+
+# 7. Whatever the new document changes besides the new entry fails, however
+#    small: foreign entries, unknown fields, top-level fields.
+f=$failures
+entry_url="$URL_BASE/secretspec-operator-$V.tgz"
+check_new_index seed-index.yaml got.yaml "$V" "$digest" "$entry_url" 2> err.txt || fail "7: the good document was rejected"
+tamper() {
+  local name="$1" expr="$2"
+  yq "$expr" got.yaml > tampered.yaml
+  if check_new_index seed-index.yaml tampered.yaml "$V" "$digest" "$entry_url" 2> err.txt; then
+    fail "7$name: accepted"
+  elif ! grep -q 'differs from the old one' err.txt; then
+    fail "7$name: wrong error: $(head -1 err.txt)"
+  fi
+}
+tamper a 'del(.entries.other-chart[1])'
+tamper b '.entries.other-chart[1].apiVersion = "v2"'
+tamper c 'del(.annotations)'
+tamper d 'del(.serverInfo)'
+tamper e 'del((.entries.secretspec-operator[] | select(.version == "0.1.0"))."x-unknown")'
+tamper f 'del(.entries.other-chart[0]."x-custom")'
+tamper g '(.entries.secretspec-operator[] | select(.version == "0.1.0")).digest = "00"'
+tamper h '.apiVersion = "v2"'
+tamper i '.entries.new-chart = [{"name": "new-chart", "version": "1.0.0"}]'
+tamper j '.entries.other-chart = []'
+[[ $failures == "$f" ]] && pass "7: any change besides the new entry fails (a-j)"
+
+# 8. The token reaches git for one command only: not in .git/config, not in
+#    the output.
+f=$failures
+V4=0.1.1-rc.4
+package "$V4"
+tgz4="pkg/secretspec-operator-$V4.tgz"
+digest4="$(sha "$tgz4")"
+token=ghp_fake_test_token_0123456789
+HELM_CHARTS_TOKEN=$token git_authed -C repo config --get http.https://github.com/.extraheader > header.txt || fail "8: no header reached git"
+grep -q '^AUTHORIZATION: basic ' header.txt || fail "8: unexpected header"
+git -C repo config --get http.https://github.com/.extraheader > /dev/null 2>&1 && fail "8: the header stayed in the git config"
+HELM_CHARTS_TOKEN=$token publish_index repo "$tgz4" "$V4" "$digest4" "$BASE/$V4" 3 > out.txt 2>&1 || fail "8: publish failed"
+grep -rqF "$token" out.txt repo/.git remote.git 2> /dev/null && fail "8: the token was written somewhere"
+grep -qF "$(printf 'x-access-token:%s' "$token" | base64 | tr -d '\n')" out.txt && fail "8: the encoded token was printed"
+git -C remote.git show main:index.yaml > got4.yaml
+[[ "$(index_entry_digest got4.yaml "$V4")" == "$digest4" ]] || fail "8: not pushed"
+[[ $failures == "$f" ]] && pass "8: the token is passed to git per command, never stored or printed"
+
+# 9. wait_for_pages: listed, not listed (bounded), and a different digest.
+f=$failures
+mkdir site
+git -C remote.git show main:index.yaml > site/index.yaml
+port="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
+python3 -m http.server "$port" --bind 127.0.0.1 --directory site > /dev/null 2>&1 &
+server=$!
+trap 'kill $server 2> /dev/null || true; rm -rf "$work"' EXIT
+for _ in $(seq 50); do
+  if curl -fs "http://127.0.0.1:$port/index.yaml" > /dev/null; then break; fi
+  sleep 0.1
+done
+pages="http://127.0.0.1:$port/index.yaml"
+wait_for_pages "$pages" "$V" "$digest" 2 0 > /dev/null || fail "9: a listed version was not found"
+rc=0
+wait_for_pages "$pages" 9.9.9 "$digest" 2 0 > /dev/null 2>&1 || rc=$?
+[[ $rc == 1 ]] || fail "9: an unlisted version must return 1, got $rc"
+rc=0
+wait_for_pages "$pages" "$V" "$other" 2 0 > /dev/null 2> err.txt || rc=$?
+[[ $rc == 2 ]] || fail "9: a different digest must return 2, got $rc"
+grep -q 'not ' err.txt || fail "9: error message"
+[[ $failures == "$f" ]] && pass "9: Pages check: listed -> 0, not listed -> 1, different digest -> 2"
 
 if [[ $failures != 0 ]]; then
   echo "$failures check(s) failed" >&2

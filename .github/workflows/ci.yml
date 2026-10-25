@@ -73,6 +73,9 @@ jobs:
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v3.22.1
+      # yq is pinned (checksum verified); jq and python3 are the runner
+      # image's (the test only reads JSON with jq and serves a local file).
+      - run: bash .github/scripts/install-yq.sh
       - run: bash .github/scripts/helm-index-test.sh
 
   # Applies the generated CRD to a real API server and checks the fixtures
