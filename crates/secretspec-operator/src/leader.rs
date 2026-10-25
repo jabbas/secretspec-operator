@@ -242,7 +242,8 @@ async fn keep(
             }
             Ok(Err(err)) => {
                 tracing::warn!(lease = name, error = %kube_error_summary(&err), "lease renewal failed; retrying");
-                next = Instant::now() + RENEW_RETRY;
+                let now = Instant::now();
+                next = now + tenure.retry_wait(now);
             }
         }
     }
@@ -366,6 +367,13 @@ impl Tenure {
             .checked_duration_since(now)
             .filter(|left| !left.is_zero())
     }
+
+    /// How long to wait after a failed renewal at `now` before the next try:
+    /// [`RENEW_RETRY`], clamped to the time left until the deadline so that
+    /// a stall never lets the keeper notice the lost leadership late.
+    fn retry_wait(&self, now: Instant) -> Duration {
+        RENEW_RETRY.min(self.deadline().saturating_duration_since(now))
+    }
 }
 
 /// What a candidate may do with the Lease it observed.
@@ -478,6 +486,25 @@ mod tests {
 
     fn ts(text: &str) -> Timestamp {
         text.parse().unwrap()
+    }
+
+    #[test]
+    fn renewal_retry_wait_is_clamped_to_the_tenure_deadline() {
+        let start = Instant::now();
+        let tenure = Tenure::new(start);
+        let at = |secs: f64| start + Duration::from_secs_f64(secs);
+
+        // Plenty of time left: the plain retry pause.
+        assert_eq!(tenure.retry_wait(at(2.0)), RENEW_RETRY);
+        // Less than a pause left: wait only until the deadline.
+        assert_eq!(tenure.retry_wait(at(9.5)), Duration::from_millis(500));
+        // The wait ends exactly at the deadline, where `remaining` is `None`.
+        let now = at(9.5);
+        assert_eq!(now + tenure.retry_wait(now), tenure.deadline());
+        assert_eq!(tenure.remaining(tenure.deadline()), None);
+        // At or past the deadline: no wait at all.
+        assert_eq!(tenure.retry_wait(tenure.deadline()), Duration::ZERO);
+        assert_eq!(tenure.retry_wait(at(11.0)), Duration::ZERO);
     }
 
     #[test]
