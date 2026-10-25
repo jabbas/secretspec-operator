@@ -407,6 +407,11 @@ too; Helm and Flux hide pre-releases unless asked. In order, it:
    version with the right digest. If Pages is slow, the job ends with a warning
    (the index is pushed); check the Pages build of `jabbas/helm-charts`.
 
+The index logic is tested without network by
+`bash .github/scripts/helm-index-test.sh` (needs `helm`, `yq`, `git`; the CI job
+`release-scripts` runs it): new version, same-digest re-run, different digest,
+invalid entries, a push race and bounded retries.
+
 It is **idempotent and fail-closed**. A version that is already in the index
 with the same digest is a no-op; with a *different* digest the job fails and
 nothing is changed (a published version is never edited: cut the next
