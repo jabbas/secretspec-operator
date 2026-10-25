@@ -17,7 +17,7 @@ use secretspec_api::constants::{
     EVENT_CONFLICT, EVENT_FINGERPRINTS_RESET, EVENT_ROTATED, REASON_CONFLICT, REASON_GENERATED,
 };
 use secretspec_api::v1alpha1::SecretSpec;
-use secretspec_core::plan::{SecretAction, plan};
+use secretspec_core::plan::{CONFLICT_REQUEUE, SecretAction, plan};
 use support::{
     DAY, annotation, applied, earlier, later, now, reasons, secret_spec, seeded_rng, with_status,
 };
@@ -222,7 +222,7 @@ fn type_mismatch_is_conflict() {
                 p.status.last_generated_time, first.status.last_generated_time,
                 "{case}: times preserved"
             );
-            assert_eq!(p.requeue_after, None, "{case}");
+            assert_eq!(p.requeue_after, Some(CONFLICT_REQUEUE), "{case}");
         }
     }
 }
