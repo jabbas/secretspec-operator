@@ -62,7 +62,7 @@ for exactly that tag. Set `TAG` to the release you are installing and
 `CHART_VERSION` to its chart version. For the current release, `0.1.1`:
 
 ```sh
-TAG=0.1.1                 # the git/image tag (plain semver)
+TAG=0.1.1                  # the git/image tag (plain semver)
 CHART_VERSION=0.1.1        # the chart version
 IDENTITY="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${TAG}"
 ISSUER="https://token.actions.githubusercontent.com"
@@ -194,15 +194,16 @@ yourself. The three digests must be identical:
 
 Copy-pasteable for `0.1.1`. For another release set `TAG` and `CHART_VERSION`
 both to the plain version (for the legacy `0.1.0`: `TAG=v0.1.0`,
-`CHART_VERSION=0.1.0`, signing identity `refs/tags/v0.1.0`). It needs `cosign`, `crane`, `jq`, `yq`, `helm` and
-`sha256sum` (`shasum -a 256` where `sha256sum` is missing). It runs in a
-subshell with `set -euo pipefail`, so any failing command, `cosign verify`
-included, stops it with a non-zero status and does not close your terminal:
+`CHART_VERSION=0.1.0`, signing identity `refs/tags/v0.1.0`). It needs `cosign`,
+`crane`, `jq`, `yq`, `helm` and `sha256sum` (`shasum -a 256` where `sha256sum`
+is missing). It runs in a subshell with `set -euo pipefail`, so any failing
+command, `cosign verify` included, stops it with a non-zero status and does not
+close your terminal:
 
 ```sh
 (
 set -euo pipefail
-TAG=0.1.1                 # the git tag (plain semver)
+TAG=0.1.1                  # the git tag (plain semver)
 CHART_VERSION=0.1.1        # the chart version
 IDENTITY="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${TAG}"
 ISSUER="https://token.actions.githubusercontent.com"
@@ -295,7 +296,7 @@ spec:
   interval: 1h
   url: oci://ghcr.io/jabbas/charts/secretspec-operator
   ref:
-    tag: "0.1.0"
+    tag: "0.1.1"
   # The Helm chart layer, passed on as the chart (needs Flux 2.3 or newer).
   layerSelector:
     mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
@@ -304,8 +305,8 @@ spec:
     provider: cosign
     matchOIDCIdentity:
       - issuer: "^https://token\\.actions\\.githubusercontent\\.com$"
-        # 0.1.0 is signed as refs/tags/v0.1.0; later releases as refs/tags/<version>.
-        subject: "^https://github\\.com/jabbas/secretspec-operator/\\.github/workflows/release\\.yml@refs/tags/v?0\\.1\\.0$"
+        # 0.1.0 used the legacy tag v0.1.0; later releases are signed as refs/tags/<version>.
+        subject: "^https://github\\.com/jabbas/secretspec-operator/\\.github/workflows/release\\.yml@refs/tags/0\\.1\\.1$"
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease

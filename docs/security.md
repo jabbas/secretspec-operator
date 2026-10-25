@@ -265,7 +265,7 @@ Set the variables for the release you are installing. For the current release,
 `0.1.1`:
 
 ```sh
-TAG=0.1.1                 # the git/image tag (plain semver)
+TAG=0.1.1                  # the git/image tag (plain semver)
 CHART_VERSION=0.1.1        # the chart version
 IDENTITY="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${TAG}"
 ISSUER="https://token.actions.githubusercontent.com"
