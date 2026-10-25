@@ -3,7 +3,10 @@
 # Signed release workflow. Runs only for tags `X.Y.Z` and `X.Y.Z-rc.N`
 # (plain semver, no `v` prefix; the legacy `v0.1.0*` tags predate this).
 #
-#   verify -> build -> image -> smoke -> chart -> release
+#   verify -> build -> image -> smoke -> chart -> release -> helm-index
+#
+# `helm-index` adds the chart to the classic HTTP Helm repository
+# (https://jabbas.github.io/helm-charts); see docs/development.md.
 #
 # Procedure and verification: docs/development.md ("Releasing") and
 # docs/security.md ("Release signing and SBOM"). Signatures are keyless
@@ -47,6 +50,9 @@ env:
   SYFT_SHA256: bb65249542db5fedeeb4d3f9b018b75e7264dbfbbb10486f044581a92f90490d
   GRYPE_VERSION: 0.121.0
   GRYPE_SHA256: 64e07133d3486115de647a66581461dccf5c732748a0a3119077395565f15519
+  CRANE_VERSION: 0.22.1
+  CRANE_SHA256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
+  HELM_REPO_URL: https://jabbas.github.io/helm-charts
 
 jobs:
   # Validates the tag against the workspace version and runs the full gate.
@@ -441,6 +447,10 @@ jobs:
     env:
       TAG: ${{ github.ref_name }}
       VERSION: ${{ needs.verify.outputs.version }}
+    outputs:
+      # Manifest digest of the pushed, signed and verified chart; `helm-index`
+      # checks the HTTP package against its layer.
+      digest: ${{ steps.chart_digest.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -653,3 +663,154 @@ jobs:
             fi
           fi
           gh release create "$TAG" "${args[@]}" assets/*
+
+  # Adds the chart to the classic HTTP Helm repository (jabbas/helm-charts,
+  # served by GitHub Pages). The repository holds only index.yaml; the entry
+  # points at the release asset created above, so this job runs after
+  # `release`. It can write nowhere in this repository or its packages: the
+  # job token is read-only, and the one write credential is the fine-grained
+  # PAT of Environment `helm-charts`, scoped to jabbas/helm-charts. The job is
+  # idempotent: re-run it on its own after a failure.
+  #
+  # Trust: Helm and Flux do not verify signatures for HTTP repositories. The
+  # package is tied to the signed OCI chart instead: its SHA-256 must equal
+  # the digest of the OCI chart layer (the manifest is signed by `chart`),
+  # the SHA256SUMS entry and the index digest. docs/installation.md shows how
+  # users check the same chain.
+  helm-index:
+    needs: [verify, chart, release]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: helm-charts
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.verify.outputs.version }}
+      CHART_DIGEST: ${{ needs.chart.outputs.digest }}
+    steps:
+      - name: Check the credential is present
+        env:
+          HELM_CHARTS_TOKEN: ${{ secrets.HELM_CHARTS_TOKEN }}
+        run: |
+          if [[ -z "$HELM_CHARTS_TOKEN" ]]; then
+            echo "::error::secret HELM_CHARTS_TOKEN is missing in Environment 'helm-charts'; see docs/development.md (Releasing). Re-run this job after adding it."
+            exit 1
+          fi
+      # This repository first: the scripts come from the tagged commit. The
+      # helm-charts checkout below must come after it, because a checkout
+      # cleans the workspace.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.22.1
+      # yq parses and rewrites the shared index, so it is pinned (checksum
+      # verified). jq is the one of the runner image, used only to read the
+      # OCI manifest.
+      - name: Install yq
+        run: bash .github/scripts/install-yq.sh
+      - name: Install crane
+        run: |
+          archive="go-containerregistry_Linux_x86_64.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/${archive}"
+          echo "$CRANE_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
+          mkdir -p "$RUNNER_TEMP/tools/bin"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/tools/bin" crane
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+      # The package is the release asset itself (the file the index will point
+      # at), not a build artifact: artifacts expire after 7 days, and a re-run
+      # must keep working. It is checked before the helm-charts credential is
+      # written anywhere. The OCI manifest is read by digest (anonymously: the
+      # package is public), so crane verifies the bytes against the digest that
+      # `chart` signed.
+      - name: Check the package against the signed chart
+        id: package
+        run: |
+          if [[ ! "$CHART_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::the chart digest '$CHART_DIGEST' from the chart job is not a sha256 digest"
+            exit 1
+          fi
+          file="secretspec-operator-${VERSION}.tgz"
+          package="chart/$file"
+          release_url="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+
+          # 1. The asset the index will point at: HTTP 200 after redirects.
+          mkdir chart
+          status="$(curl -sSL --retry 3 -o "$package" -w '%{http_code}' "$release_url/$file")"
+          if [[ "$status" != 200 ]]; then
+            echo "::error::$release_url/$file answered HTTP $status, expected 200"
+            exit 1
+          fi
+          sha="$(sha256sum "$package" | cut -d' ' -f1)"
+          echo "release asset sha256: $sha"
+
+          # 2. The OCI chart layer of the signed manifest.
+          manifest="$(crane manifest "${CHART_REPO#oci://}/secretspec-operator@$CHART_DIGEST")"
+          layer="$(jq -r '
+            if (.layers | length) == 1 and .layers[0].mediaType == "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
+            then .layers[0].digest else empty end' <<< "$manifest")"
+          if [[ ! "$layer" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::the OCI chart manifest $CHART_DIGEST does not have exactly one chart layer"
+            exit 1
+          fi
+          echo "OCI chart layer: $layer"
+          if [[ "$layer" != "sha256:$sha" ]]; then
+            echo "::error::release asset sha256:$sha differs from the OCI chart layer $layer"
+            exit 1
+          fi
+
+          # 3. SHA256SUMS of the release.
+          curl -fsSL --retry 3 -o SHA256SUMS "$release_url/SHA256SUMS"
+          listed="$(awk -v f="$file" '$2 == f {print $1}' SHA256SUMS)"
+          if [[ "$listed" != "$sha" ]]; then
+            echo "::error::SHA256SUMS lists '$listed' for $file, the release asset is $sha"
+            exit 1
+          fi
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+      # The token is used for the clone only and is not stored (the push
+      # supplies it per command, see publish_index in helm-index.sh).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: jabbas/helm-charts
+          path: helm-charts
+          token: ${{ secrets.HELM_CHARTS_TOKEN }}
+          persist-credentials: false
+      # Adds the entry (the one entry helm builds for the package is inserted
+      # into the existing document, which is otherwise left untouched),
+      # commits and pushes. A lost push race is retried from the new remote
+      # state; a version that is already listed with another digest fails;
+      # with the same digest it is a no-op.
+      - name: Update the index
+        env:
+          SHA256: ${{ steps.package.outputs.sha256 }}
+          HELM_CHARTS_TOKEN: ${{ secrets.HELM_CHARTS_TOKEN }}
+        run: |
+          source .github/scripts/helm-index.sh
+          publish_index helm-charts "chart/secretspec-operator-${VERSION}.tgz" "$VERSION" "$SHA256" \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+      # Pages builds after the push. A slow build (the version is not listed
+      # yet) is reported, not failed: the index is pushed, and a re-run of this
+      # job waits again. A DIFFERENT digest for the version fails the job.
+      - name: Wait for the index to be served
+        env:
+          SHA256: ${{ steps.package.outputs.sha256 }}
+        run: |
+          source .github/scripts/helm-index.sh
+          rc=0
+          wait_for_pages "$HELM_REPO_URL/index.yaml" "$VERSION" "$SHA256" || rc=$?
+          case "$rc" in
+            0)
+              echo "$VERSION is served at $HELM_REPO_URL" >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            1)
+              echo "::warning::$HELM_REPO_URL/index.yaml does not list $VERSION yet (the index is pushed; the Pages build is slow or failed). Check the Pages deployment of jabbas/helm-charts, then re-run this job."
+              echo "**$HELM_REPO_URL/index.yaml does not list $VERSION yet.** The index is pushed; check the Pages build of jabbas/helm-charts." >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              echo "**$HELM_REPO_URL/index.yaml serves a different digest for $VERSION.**" >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+              ;;
+          esac

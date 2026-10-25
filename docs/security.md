@@ -153,16 +153,32 @@ have write access to Secrets in that namespace, so this is **not a privilege
 escalation**; it is the reason for the guidance to treat write access to Secrets
 as sensitive. A Secret *without* the labels is never adopted.
 
-## Dependency advisories: the RSA ignore
+## Dependency advisories: the ignores
 
-`cargo audit` and `cargo deny` run in CI. One advisory is deliberately ignored:
-`RUSTSEC-2023-0071`, a timing side channel in RSA private-key *operations*
-(the "Marvin attack") for which the `rsa` crate has no patched release. The
+`cargo audit` and `cargo deny` run in CI. Two advisories are deliberately
+ignored. The first is `RUSTSEC-2023-0071`, a timing side channel in RSA
+private-key *operations* (the "Marvin attack") for which the `rsa` crate has no
+patched release. The
 operator uses RSA only to **generate** SSH keys (through the `ssh-key` crate,
 `sshKeyPair.algorithm: rsa`); it never signs, decrypts or otherwise performs a
 private-key operation with an RSA key, so the leaking operation is never
 executed. The rationale is recorded next to the ignore in `.cargo/audit.toml` and
 `deny.toml`, and is revisited when a fixed release exists.
+
+A second advisory is ignored the same way: `RUSTSEC-2026-0387`, timing
+variability in `crypto-bigint` operations that are meant to be constant-time.
+The operator has `crypto-bigint 0.5.5` through `ssh-key 0.6` →
+`elliptic-curve 0.13` → `p256`/`p384`/`p521`, and uses it only to **generate**
+SSH ECDSA key pairs (`sshKeyPair.algorithm: ecdsa`); ed25519 (the default), RSA
+and bcrypt do not use it. What is exposed is the subtraction-based `ct_lt`
+range check, and the byte conversions, on the freshly sampled secret scalar
+during key generation. The operator never signs, performs ECDH or decrypts with
+such a key; besides sampling, only the public key is computed from the secret
+scalar. Exploiting this needs a co-resident microarchitectural timing observer
+while the key is generated. No fixed 0.5.x release exists; the fix is in
+`crypto-bigint` 0.7.6 or later, and the ignore is revisited when a stable
+`ssh-key` 0.7 ships. If you generate ECDSA keys and consider such an observer
+part of your threat model, use ed25519 (the default) instead.
 
 ## Release signing and SBOM
 
@@ -295,6 +311,39 @@ printed by `cosign verify` (`critical.image.docker-manifest-digest`, the index
 digest) and install with `image.digest`
 ([Installation](installation.md#registry-mirror-pull-secrets-and-digest-pinning)).
 Only version tags are published; there is no `latest`.
+
+### The HTTP Helm repository
+
+The chart is also listed in a classic HTTP Helm repository,
+`https://jabbas.github.io/helm-charts` (GitHub Pages of
+[`jabbas/helm-charts`](https://github.com/jabbas/helm-charts)). It is a
+convenience channel with a **weaker trust model** than the OCI chart:
+
+- **Nothing on it is signed**, and neither Helm nor Flux verifies a signature
+  for an HTTP repository. `helm install` trusts the `index.yaml` it fetches and
+  the package behind the URL in it, and does not check the index digest.
+- **The index holds no packages.** Every entry points at the chart package
+  attached to the GitHub Release of this repository
+  (`…/releases/download/<tag>/secretspec-operator-<version>.tgz`) and carries
+  its SHA-256. Anyone who can write to `jabbas/helm-charts` (or the Pages site)
+  can point a version at a different package; the only credential that can do so
+  automatically is a fine-grained token limited to that repository, held in the
+  `helm-charts` Environment of this repository and available only to release
+  tags.
+- **The package is the signed chart.** It is byte-identical to the chart layer
+  of the OCI chart of the same version, whose manifest is cosign-signed. The
+  release workflow asserts that the package's SHA-256 equals that layer digest
+  and the `SHA256SUMS` entry before it adds the version to the index, and never
+  changes an entry that exists. The package itself carries no separate
+  signature (`SHA256SUMS` is not signed either).
+
+You verify the channel by chaining the digests: `cosign verify` the OCI chart,
+read the digest of its chart layer, and compare it with the SHA-256 of the
+downloaded package and with the `digest` in `index.yaml`. The exact commands,
+including for `0.1.0` with its legacy `v0.1.0` identity, are in
+[Installation: What is and is not verified](installation.md#what-is-and-is-not-verified).
+For automated installs that must be checked, use the OCI channel (Flux:
+`OCIRepository` with `verify`, same page).
 
 ## Reporting a vulnerability
 

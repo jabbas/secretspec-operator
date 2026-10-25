@@ -577,7 +577,8 @@ The tag format is **[owner]**; see [ADR 0001](../adr/0001-semver-release-tags.md
 
 ### 10.3 Helm chart
 
-- **Location:** `charts/secretspec-operator` in this repository. Published to `oci://ghcr.io/jabbas/charts/secretspec-operator`.
+- **Location:** `charts/secretspec-operator` in this repository. Published to `oci://ghcr.io/jabbas/charts/secretspec-operator`, which is the cosign-signed channel.
+  - A second, classic HTTP Helm repository is shared by all of the owner's charts: `https://jabbas.github.io/helm-charts` (repository `jabbas/helm-charts`, GitHub Pages, only `index.yaml`). The chart packages stay GitHub Release assets of this repository. Helm and Flux do not verify signatures on this channel; the package is byte-identical to the signed OCI chart layer. **[owner]** See [ADR 0002](../adr/0002-http-helm-repository.md).
 - **Version:** chart version = app version = image tag, with no `v` prefix (ADR 0001). **[owner]**
 - **CRDs:** rendered as templates. The `crds/` directory MUST NOT be used, because Helm never upgrades it.
   - `crds.install: true` controls whether the CRD is rendered.
@@ -638,6 +639,7 @@ resyncInterval: 1h
 | Pull request | `fmt`, `clippy`, tests, `cargo-deny`, `cargo-audit`, crdgen diff check, `helm lint` / `helm template`, e2e on kind against Kubernetes 1.34 and the newest stable minor. |
 | Tag `X.Y.Z` | Multi-arch build; vulnerability scan (fail on high); SBOM attestation; cosign keyless signing of the image and the chart; push image and chart; GitHub Release with notes generated from conventional commits. |
 | Tag `X.Y.Z-rc.N` | The full tag pipeline above, unchanged: multi-arch build, scan, SBOM, cosign signing, image and chart push. The GitHub Release is marked as a *pre-release*. |
+| After the release (every `X.Y.Z` and `X.Y.Z-rc.N` tag) | Job `helm-index` (Environment `helm-charts`, secret `HELM_CHARTS_TOKEN`): checks the package against the signed OCI chart layer, then adds the version to the HTTP Helm repository index in `jabbas/helm-charts`. Idempotent; a failure does not invalidate the release and the job can be re-run alone. **[owner]** See [ADR 0002](../adr/0002-http-helm-repository.md). |
 | Maintenance | Renovate or Dependabot for Cargo, Actions and base images. |
 
 - The release workflow triggers only on tags matching `X.Y.Z` and `X.Y.Z-rc.N` (no `v` prefix). **[owner]** The legacy `v0.1.0` tags predate this rule; see ADR 0001.
@@ -720,7 +722,7 @@ All documentation is in English.
 | Deliverable | Content |
 |---|---|
 | `README.md` | What and why; a 5-line quickstart; the single acknowledgement sentence. |
-| `docs/installation.md` | Chart install, values (incl. registry mirror, `imagePullSecrets`, digest pinning), namespace modes, CRD lifecycle, the exact `cosign verify` commands (§10.4), supported Kubernetes versions (§10.5). |
+| `docs/installation.md` | Chart install (OCI, and `helm repo add jabbas https://jabbas.github.io/helm-charts` with its trust note, ADR 0002), values (incl. registry mirror, `imagePullSecrets`, digest pinning), namespace modes, CRD lifecycle, the exact `cosign verify` commands (§10.4), supported Kubernetes versions (§10.5). |
 | `docs/api-reference.md` | Every field, its default and its validation. |
 | `docs/operations.md` | Manual rotation (delete the Secret); consumers must reload; metrics; troubleshooting via conditions and Events. |
 | `docs/security.md` | RBAC, threat model, the adoption note, value-redaction guarantees, release signing and the `cosign verify` commands (§10.4). |
