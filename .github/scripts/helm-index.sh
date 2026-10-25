@@ -163,8 +163,9 @@ update_index() {
   mkdir "$stage/out"
   cp -- "$index" "$stage/out/index.yaml"
   # The one entry goes first (helm lists newest first; clients sort anyway);
-  # everything else in the document stays as it is.
-  if ! NEW="$stage/index.yaml" CHART="$CHART_NAME" VERSION="$version" yq -i '
+  # everything else in the document stays as it is (-c: the compact sequence
+  # indent that helm writes, so the rewrite does not re-indent the lists).
+  if ! NEW="$stage/index.yaml" CHART="$CHART_NAME" VERSION="$version" yq -i -c '
       .entries[strenv(CHART)] = [load(strenv(NEW)).entries[strenv(CHART)][0]] + (.entries[strenv(CHART)] // [])
       | .generated = load(strenv(NEW)).generated' "$stage/out/index.yaml" ||
     ! check_new_index "$index" "$stage/out/index.yaml" "$version" "$digest" "$url"; then

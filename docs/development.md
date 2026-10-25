@@ -452,9 +452,14 @@ reusable workflow whose Environment-secret handling could not be tested here.
 Add the version by hand instead, with the same checks, from a **fresh** clone
 of `jabbas/helm-charts` (the function resets it to `origin/main`) and your own
 git credentials for it (leave `HELM_CHARTS_TOKEN` unset). Needs `cosign`,
-`crane`, `jq`, `yq` (mikefarah v4), `helm` and `git`:
+`crane`, `jq`, `yq` (mikefarah v4), `helm`, `git` and `sha256sum` (`shasum -a
+256` where `sha256sum` is missing). It runs in a subshell with `set -euo
+pipefail`, so any failing command or `MISMATCH` stops it before the index is
+touched, and it does not close your terminal:
 
 ```sh
+(
+set -euo pipefail
 TAG=0.1.1                  # the release tag; the version equals the tag
 VERSION="${TAG}"
 IDENTITY="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${TAG}"
@@ -478,10 +483,12 @@ git -C /path/to/secretspec-operator show "${TAG}:.github/scripts/helm-index.sh" 
 source ./helm-index.sh
 publish_index helm-charts-fresh "$PWD/secretspec-operator-${VERSION}.tgz" "${VERSION}" "${SHA}" "${RELEASE_URL}"
 wait_for_pages https://jabbas.github.io/helm-charts/index.yaml "${VERSION}" "${SHA}"
+)
 ```
 
-Run it in a subshell or a script with `set -euo pipefail`, so the `exit 1`
-checks and any failing command stop it before the index is touched.
+The last command exits non-zero if Pages does not serve the version within
+about 10 minutes (the index is pushed by then; check the Pages build) or serves
+a different digest.
 
 ### Verify a release
 
