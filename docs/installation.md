@@ -1,10 +1,23 @@
 # Installation
 
-The operator is installed with its Helm chart, published as an OCI artifact:
+The operator is installed with its Helm chart. There are two channels with the
+same chart package:
 
-```text
-oci://ghcr.io/jabbas/charts/secretspec-operator
-```
+- an **OCI artifact**, signed with cosign (the channel whose signature you can
+  verify, with `cosign` or with Flux):
+
+  ```text
+  oci://ghcr.io/jabbas/charts/secretspec-operator
+  ```
+
+- a classic **HTTP Helm repository** for the short `helm repo add` workflow.
+  Nothing in it is signed; see [Install from the HTTP Helm
+  repository](#install-from-the-http-helm-repository) for what that means and
+  how to verify it:
+
+  ```text
+  https://jabbas.github.io/helm-charts
+  ```
 
 Release tags follow [semver](https://semver.org) exactly, without a `v` prefix:
 the git tag, the chart version, the chart `appVersion` and the image tag are the
@@ -21,9 +34,12 @@ always installs the image of the same release.
 ## Requirements
 
 - Kubernetes **1.34 or newer**. CI tests 1.34 and 1.37.
-- Helm with OCI support (3.8 or newer). Helm 4 works too; see
+- Helm with OCI support (3.8 or newer) for the OCI channel; any Helm 3 for the
+  HTTP repository. Helm 4 works too; see
   [Helm 4 and field conflicts](#helm-4-and-field-conflicts).
 - Optional: [`cosign`](https://docs.sigstore.dev/cosign/) to verify the release.
+  Verifying the HTTP package also needs `crane` (or `oras`), `jq` and `yq`
+  ([mikefarah/yq](https://github.com/mikefarah/yq)).
 
 The pod complies with the Pod Security Standard `restricted`: it runs as a
 non-root user (UID/GID 65532), with a read-only root file system, all
@@ -91,7 +107,9 @@ A failed verification prints an error and exits non-zero; do not install. The
 output of a successful `cosign verify` contains the digest of the multi-arch
 image (`critical.image.docker-manifest-digest`), which you can pin with
 `image.digest` (see [Digest pinning](#registry-mirror-pull-secrets-and-digest-pinning)).
-More background is in [Security](security.md#release-signing-and-sbom).
+More background is in [Security](security.md#release-signing-and-sbom). The
+signed OCI chart is also what anchors the
+[HTTP Helm repository](#what-is-and-is-not-verified).
 
 ## Install
 
@@ -129,6 +147,168 @@ fullname*: the release name when it contains `secretspec-operator`, otherwise
 Pass many values at once with a file (`-f values.yaml`) instead of `--set`. The
 chart ships a `values.schema.json`, so `helm install` rejects wrong types,
 unknown top-level keys and out-of-range values before anything is applied.
+
+## Install from the HTTP Helm repository
+
+The same chart is listed in a classic Helm repository, served by GitHub Pages
+from [`jabbas/helm-charts`](https://github.com/jabbas/helm-charts). The
+repository holds only an `index.yaml`; each entry points at the chart package
+attached to the GitHub Release of this repository. Create and label the
+namespace first if you want `restricted` enforcement (see
+[Requirements](#requirements)), then:
+
+```sh
+helm repo add jabbas https://jabbas.github.io/helm-charts
+helm repo update
+helm install secretspec-operator jabbas/secretspec-operator \
+  --version 0.1.0 \
+  --namespace secretspec-system --create-namespace
+```
+
+Add `--set replicas=2` or any other value exactly as for the OCI install; every
+other section of this page applies unchanged (use `jabbas/secretspec-operator`
+wherever an example says `oci://ghcr.io/jabbas/charts/secretspec-operator`).
+Release candidates are listed too, but Helm hides pre-releases unless you ask:
+`helm search repo jabbas/secretspec-operator --devel --versions`, or install
+with an explicit `--version 0.1.1-rc.1`.
+
+### What is and is not verified
+
+**Neither Helm nor Flux verifies a signature for an HTTP Helm repository.**
+`helm install` trusts the `index.yaml` served by `jabbas.github.io` and the
+package behind the URL in it (a GitHub Release asset); the index digest is not
+checked by Helm when it downloads the package. Whoever can change the
+`jabbas/helm-charts` repository, or the Pages site, can point a version at a
+different package. Nothing on this channel is signed on its own.
+
+The channel is tied to the signed OCI chart instead. The package behind every
+index entry is byte-identical to the layer
+(`application/vnd.cncf.helm.chart.content.v1.tar+gzip`) of the OCI chart of the
+same version, whose manifest is signed with cosign. The release workflow asserts
+that equality before it adds an entry, and you can check the whole chain
+yourself. The three digests must be identical:
+
+1. the chart layer of the **cosign-verified** OCI chart,
+2. the SHA-256 of the package you downloaded,
+3. the `digest` of the entry in `index.yaml`.
+
+Copy-pasteable for `0.1.0` (which carries the legacy `v0.1.0` signing
+identity). For a later release set `TAG` and `CHART_VERSION` both to the plain
+version, e.g. `0.1.1`. It needs `cosign`, `crane`, `jq`, `yq`, `helm` and
+`sha256sum` (`shasum -a 256` where `sha256sum` is missing):
+
+```sh
+TAG=v0.1.0                 # the git tag (legacy v prefix for 0.1.0 only)
+CHART_VERSION=0.1.0        # the chart version
+IDENTITY="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${TAG}"
+ISSUER="https://token.actions.githubusercontent.com"
+
+# 1. Verify the OCI chart and take the manifest digest cosign actually verified.
+CHART_DIGEST="$(cosign verify "ghcr.io/jabbas/charts/secretspec-operator:${CHART_VERSION}" \
+  --certificate-identity "${IDENTITY}" \
+  --certificate-oidc-issuer "${ISSUER}" \
+  | jq -r '.[0].critical.image."docker-manifest-digest"')"
+
+# 2. The chart layer of that manifest (by digest, not by tag).
+LAYER_DIGEST="$(crane manifest "ghcr.io/jabbas/charts/secretspec-operator@${CHART_DIGEST}" \
+  | jq -r '.layers[] | select(.mediaType == "application/vnd.cncf.helm.chart.content.v1.tar+gzip") | .digest')"
+# Without crane: oras manifest fetch "ghcr.io/jabbas/charts/secretspec-operator@${CHART_DIGEST}" | jq ...  (same filter)
+
+# 3. The package from the HTTP repository, and the digest its index entry carries.
+helm pull jabbas/secretspec-operator --version "${CHART_VERSION}" --destination .
+TGZ_DIGEST="sha256:$(sha256sum "secretspec-operator-${CHART_VERSION}.tgz" | cut -d' ' -f1)"
+INDEX_DIGEST="sha256:$(curl -fsSL https://jabbas.github.io/helm-charts/index.yaml \
+  | CHART_VERSION="${CHART_VERSION}" yq '.entries.secretspec-operator[] | select(.version == strenv(CHART_VERSION)) | .digest')"
+
+echo "layer: ${LAYER_DIGEST}"; echo "tgz:   ${TGZ_DIGEST}"; echo "index: ${INDEX_DIGEST}"
+[ "${LAYER_DIGEST}" = "${TGZ_DIGEST}" ] && [ "${LAYER_DIGEST}" = "${INDEX_DIGEST}" ] \
+  && echo "OK: the HTTP package is the signed OCI chart" || echo "MISMATCH: do not install"
+```
+
+The commands assume you ran `helm repo add jabbas …` above. If `cosign verify`
+fails the pipeline stops with an error; `MISMATCH` means do not install, and
+please [report it](security.md#reporting-a-vulnerability). To install exactly
+the package you verified, use the downloaded file
+(`helm install … ./secretspec-operator-${CHART_VERSION}.tgz`).
+
+### Flux
+
+Flux does not verify HTTP repositories either. A `HelmRepository` of the
+default type and a `HelmRelease` with `chart.spec`:
+
+```yaml
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: jabbas
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: https://jabbas.github.io/helm-charts
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: secretspec-operator
+  namespace: flux-system
+spec:
+  interval: 1h
+  releaseName: secretspec-operator
+  targetNamespace: secretspec-system
+  install:
+    createNamespace: true
+  chart:
+    spec:
+      chart: secretspec-operator
+      version: "0.1.0"          # pin an exact version
+      sourceRef:
+        kind: HelmRepository
+        name: jabbas
+        namespace: flux-system
+  # values:
+  #   replicas: 2
+```
+
+A semver range such as `">=0.1.0"` skips release candidates; to follow them,
+write the range with a pre-release part (`">=0.1.1-0"`).
+
+**For signature checking in Flux, use the OCI channel with `verify`.** An
+`OCIRepository` verifies the cosign signature of the chart before Flux
+reconciles it, and the `HelmRelease` takes the chart through `chartRef`:
+
+```yaml
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: secretspec-operator
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: oci://ghcr.io/jabbas/charts/secretspec-operator
+  ref:
+    tag: "0.1.0"
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: "^https://token\\.actions\\.githubusercontent\\.com$"
+        # 0.1.0 is signed as refs/tags/v0.1.0; later releases as refs/tags/<version>.
+        subject: "^https://github\\.com/jabbas/secretspec-operator/\\.github/workflows/release\\.yml@refs/tags/v?0\\.1\\.0$"
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: secretspec-operator
+  namespace: flux-system
+spec:
+  interval: 1h
+  releaseName: secretspec-operator
+  targetNamespace: secretspec-system
+  install:
+    createNamespace: true
+  chartRef:
+    kind: OCIRepository
+    name: secretspec-operator
+```
 
 ## Scope: cluster mode and namespace mode
 

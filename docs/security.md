@@ -296,6 +296,39 @@ digest) and install with `image.digest`
 ([Installation](installation.md#registry-mirror-pull-secrets-and-digest-pinning)).
 Only version tags are published; there is no `latest`.
 
+### The HTTP Helm repository
+
+The chart is also listed in a classic HTTP Helm repository,
+`https://jabbas.github.io/helm-charts` (GitHub Pages of
+[`jabbas/helm-charts`](https://github.com/jabbas/helm-charts)). It is a
+convenience channel with a **weaker trust model** than the OCI chart:
+
+- **Nothing on it is signed**, and neither Helm nor Flux verifies a signature
+  for an HTTP repository. `helm install` trusts the `index.yaml` it fetches and
+  the package behind the URL in it, and does not check the index digest.
+- **The index holds no packages.** Every entry points at the chart package
+  attached to the GitHub Release of this repository
+  (`…/releases/download/<tag>/secretspec-operator-<version>.tgz`) and carries
+  its SHA-256. Anyone who can write to `jabbas/helm-charts` (or the Pages site)
+  can point a version at a different package; the only credential that can do so
+  automatically is a fine-grained token limited to that repository, held in the
+  `helm-charts` Environment of this repository and available only to release
+  tags.
+- **The package is the signed chart.** It is byte-identical to the chart layer
+  of the OCI chart of the same version, whose manifest is cosign-signed. The
+  release workflow asserts that the package's SHA-256 equals that layer digest
+  and the `SHA256SUMS` entry before it adds the version to the index, and never
+  changes an entry that exists. The package itself carries no separate
+  signature (`SHA256SUMS` is not signed either).
+
+You verify the channel by chaining the digests: `cosign verify` the OCI chart,
+read the digest of its chart layer, and compare it with the SHA-256 of the
+downloaded package and with the `digest` in `index.yaml`. The exact commands,
+including for `0.1.0` with its legacy `v0.1.0` identity, are in
+[Installation: What is and is not verified](installation.md#what-is-and-is-not-verified).
+For automated installs that must be checked, use the OCI channel (Flux:
+`OCIRepository` with `verify`, same page).
+
 ## Reporting a vulnerability
 
 Please report suspected vulnerabilities **privately** through GitHub private

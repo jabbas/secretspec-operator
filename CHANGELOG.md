@@ -6,6 +6,18 @@ All notable changes are documented here. The format follows
 
 ## Unreleased
 
+### Added
+
+- **HTTP Helm repository.** The chart is also published to the classic Helm
+  repository `https://jabbas.github.io/helm-charts` (`helm repo add jabbas
+  https://jabbas.github.io/helm-charts`), next to the cosign-signed OCI chart.
+  The index points at the release assets of this repository. It is not signed
+  and neither Helm nor Flux verifies it; the release workflow asserts that each
+  package is byte-identical to the signed OCI chart layer, and
+  [Installation](docs/installation.md#what-is-and-is-not-verified) shows how to
+  verify the digest chain. `0.1.0`, `0.1.0-rc.1` and `0.1.0-rc.2` are already
+  listed.
+
 ### Changed
 
 - **Release tags and image tags drop the `v` prefix from 0.1.1 on.** Releases

@@ -348,6 +348,7 @@ database download) and the failed job is one of:
 | `image`, at or after "Tag the image" | The tag exists and is reused; the image is scanned, signed and verified again (extra signatures on the same digest are harmless). |
 | `smoke`, `chart` | The image is fixed. `chart` reuses a chart version that was already pushed. |
 | `release` | If the GitHub Release was created but is incomplete, delete that **release** (not the tag) in the UI first; `gh release create` refuses to overwrite one. |
+| `helm-index` | Always, once the cause is fixed (see [`helm-index`](#helm-index-the-http-helm-repository)). Re-run only this job; it is idempotent. |
 
 Cut the next candidate (`-rc.2`) or patch version instead, and do not re-tag, when:
 
@@ -371,10 +372,52 @@ Cut the next candidate (`-rc.2`) or patch version instead, and do not re-tag, wh
 | `smoke` | Runs the pushed image with `--help` on amd64 and on arm64 (QEMU). |
 | `chart` | Packages the chart at the release version (or, if that version is already published, pulls it), checks that it renders the image `ghcr.io/jabbas/secretspec-operator:<tag>`, pushes it if new, signs it and verifies the signature. |
 | `release` | Creates the GitHub Release (pre-release for `-rc.N`) with generated notes, the chart package, the SBOMs and `SHA256SUMS`. |
+| `helm-index` | Adds the version to the HTTP Helm repository `jabbas/helm-charts` after checking the package against the signed OCI chart. See below. |
 
 Write permissions are granted per job: only `image` and `chart` can push packages
 and obtain an OIDC token for signing, only `release` can write repository
-contents.
+contents. `helm-index` has a read-only job token and writes only to
+`jabbas/helm-charts`, with its own credential.
+
+### `helm-index`: the HTTP Helm repository
+
+`helm-index` (Environment `helm-charts`, runs after `release`) publishes the
+chart to the classic Helm repository `https://jabbas.github.io/helm-charts`
+(repository `jabbas/helm-charts`, one root `index.yaml`, no packages). Every
+entry points at this release's asset
+`https://github.com/jabbas/secretspec-operator/releases/download/<tag>/secretspec-operator-<version>.tgz`,
+so the job must run after the release exists. Release candidates are listed
+too; Helm and Flux hide pre-releases unless asked. In order, it:
+
+1. fails at once if the secret `HELM_CHARTS_TOKEN` is missing;
+2. takes the package from the `release-chart` artifact and asserts, with
+   `::error::` on any mismatch, that its SHA-256 equals (a) the chart-layer
+   digest of the pushed, signed OCI chart (read by the digest the `chart` job
+   verified, with `crane` pinned in `release.yml`), (b) the `SHA256SUMS` entry
+   of the release, and (c) the SHA-256 of the downloaded release asset, which
+   must answer HTTP 200 after redirects;
+3. only then checks out `jabbas/helm-charts` with the token and runs
+   `helm repo index --url <release download base> --merge index.yaml`
+   (`.github/scripts/helm-index.sh`), requiring the result to be the old index
+   plus exactly one complete entry;
+4. commits as `secretspec-operator <version>` (`github-actions[bot]`) and pushes.
+   A lost push race (another chart updated the index) is retried from the new
+   remote state, at most 5 times, then the job fails;
+5. waits up to about 10 minutes until `…/helm-charts/index.yaml` serves the
+   version with the right digest. If Pages is slow, the job ends with a warning
+   (the index is pushed); check the Pages build of `jabbas/helm-charts`.
+
+It is **idempotent and fail-closed**. A version that is already in the index
+with the same digest is a no-op; with a *different* digest the job fails and
+nothing is changed (a published version is never edited: cut the next
+release candidate). The job cannot change this repository or its packages.
+
+If `helm-index` fails, fix the cause (token expired or missing, Pages down,
+`jabbas/helm-charts` unreachable) and **re-run only that job** ("Re-run failed
+jobs"); the release, the image and the OCI chart are not touched by it. The
+versions `0.1.0`, `0.1.0-rc.1` and `0.1.0-rc.2` predate the job and were added
+to the index by hand (their URLs use the legacy `v0.1.0*` tags); the job only
+ever adds, it never rewrites an entry.
 
 ### Verify a release
 
@@ -383,7 +426,10 @@ Follow [Security: Release signing and SBOM](security.md#release-signing-and-sbom
 SBOM of a platform image). Also check that the packages are public
 (`docker pull ghcr.io/jabbas/secretspec-operator:<tag>` and `helm pull
 oci://ghcr.io/jabbas/charts/secretspec-operator --version <version>` work
-without logging in) and that a pre-release is marked as such.
+without logging in; `helm-index` reads the chart manifest anonymously too) and
+that a pre-release is marked as such. For the HTTP channel, run the digest-chain
+recipe in [Installation](installation.md#what-is-and-is-not-verified) for the new
+version.
 
 ### One-time setup and maintenance
 
@@ -391,10 +437,24 @@ without logging in) and that a pre-release is marked as such.
   container package and the `charts/secretspec-operator` package on ghcr.io must
   be public and linked to this repository (package settings). Without that,
   users cannot pull or verify them anonymously.
+- **`HELM_CHARTS_TOKEN` (Environment `helm-charts`).** The only credential that
+  can write to `jabbas/helm-charts`. Create a **fine-grained personal access
+  token**: resource owner `jabbas`, repository access **only**
+  `jabbas/helm-charts`, permissions **Contents: Read and write** and
+  **Metadata: Read** (nothing else), and a fixed expiry (for example one year).
+  Store it as the secret `HELM_CHARTS_TOKEN` of the Environment `helm-charts`
+  of this repository (not a repository secret). The Environment's deployment policy allows only the
+  release tags (`[0-9]*.[0-9]*.[0-9]*`, which also matches `X.Y.Z-rc.N`), so
+  nothing else can read the secret. **Renew the token before it expires**:
+  generate a new one with the same settings, replace the secret, revoke the old
+  token, and note the next expiry date. An expired or revoked token makes
+  `helm-index` fail on the push (or at the check-out); re-run only that job after
+  replacing it.
 - **Protect tags.** A repository ruleset for `v*` tags that blocks deletion and
   updates enforces the "never move a tag" rule.
 - **Scanner and cosign versions** are pinned in the `env:` block of
-  `release.yml`. The syft and grype archives are verified against a SHA-256 that
+  `release.yml` (so are `crane`, used by `helm-index`, and the URL of the HTTP
+  repository). The crane, syft and grype archives are verified against a SHA-256 that
   is pinned next to the version; when bumping one, take the checksum of the
   `linux_amd64.tar.gz` from the `*_checksums.txt` of that upstream release and
   change both. cosign is installed by the SHA-pinned `sigstore/cosign-installer`,

@@ -27,16 +27,21 @@ spec:
 Run the `kubectl` commands from a clone of this repository.
 
 ```sh
-helm install secretspec-operator oci://ghcr.io/jabbas/charts/secretspec-operator --version 0.1.0 --namespace secretspec-system --create-namespace --wait
+helm repo add jabbas https://jabbas.github.io/helm-charts
+helm install secretspec-operator jabbas/secretspec-operator --version 0.1.0 --namespace secretspec-system --create-namespace --wait
 kubectl apply -f examples/app-admin-password.yaml
 kubectl wait --for=condition=Ready secretspec/app-admin --timeout=60s
 kubectl get secretspec app-admin
 kubectl get secret app-admin -o jsonpath='{.data.password}' | base64 -d; echo
 ```
 
-The first command installs the CRD and the operator; the second declares the
-Secret `app-admin` in the `default` namespace; the last three show that the
-operator made it ready and read the generated password.
+`helm install` installs the CRD and the operator; `kubectl apply` declares the
+Secret `app-admin` in the `default` namespace; the last three commands show that
+the operator made it ready and read the generated password.
+
+The HTTP repository is not signed. For the cosign-signed chart, install from
+`oci://ghcr.io/jabbas/charts/secretspec-operator`; both channels and how to
+verify them are in [Installation](docs/installation.md).
 
 ## Features
 
