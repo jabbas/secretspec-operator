@@ -4,4 +4,15 @@ ignore = [
     # patched release. The operator only generates RSA keys (via `ssh-key`) and
     # never performs private-key operations (no signing or decryption).
     "RUSTSEC-2023-0071",
+    # Timing variability in `crypto-bigint` operations meant to be constant-time
+    # (subtraction, zero counting, division, Montgomery multiplication). No
+    # fixed 0.5.x exists; the fix is in crypto-bigint >= 0.7.6. We have 0.5.5,
+    # pulled in by ssh-key 0.6 -> elliptic-curve 0.13 -> p256/p384/p521, which
+    # the operator uses only to GENERATE SSH ECDSA key pairs (ed25519, the
+    # default, RSA and bcrypt do not use it). Exposed: the subtraction-based
+    # `ct_lt` range check and the byte conversions on the freshly sampled secret
+    # scalar during key generation. The operator never signs, derives or
+    # decrypts. Exploiting it needs a co-resident microarchitectural timing
+    # observer during generation. Revisit when a stable ssh-key 0.7 ships.
+    "RUSTSEC-2026-0387",
 ]

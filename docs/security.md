@@ -153,16 +153,31 @@ have write access to Secrets in that namespace, so this is **not a privilege
 escalation**; it is the reason for the guidance to treat write access to Secrets
 as sensitive. A Secret *without* the labels is never adopted.
 
-## Dependency advisories: the RSA ignore
+## Dependency advisories: the ignores
 
-`cargo audit` and `cargo deny` run in CI. One advisory is deliberately ignored:
-`RUSTSEC-2023-0071`, a timing side channel in RSA private-key *operations*
-(the "Marvin attack") for which the `rsa` crate has no patched release. The
+`cargo audit` and `cargo deny` run in CI. Two advisories are deliberately
+ignored. The first is `RUSTSEC-2023-0071`, a timing side channel in RSA
+private-key *operations* (the "Marvin attack") for which the `rsa` crate has no
+patched release. The
 operator uses RSA only to **generate** SSH keys (through the `ssh-key` crate,
 `sshKeyPair.algorithm: rsa`); it never signs, decrypts or otherwise performs a
 private-key operation with an RSA key, so the leaking operation is never
 executed. The rationale is recorded next to the ignore in `.cargo/audit.toml` and
 `deny.toml`, and is revisited when a fixed release exists.
+
+A second advisory is ignored the same way: `RUSTSEC-2026-0387`, timing
+variability in `crypto-bigint` operations that are meant to be constant-time.
+The operator has `crypto-bigint 0.5.5` through `ssh-key 0.6` →
+`elliptic-curve 0.13` → `p256`/`p384`/`p521`, and uses it only to **generate**
+SSH ECDSA key pairs (`sshKeyPair.algorithm: ecdsa`); ed25519 (the default), RSA
+and bcrypt do not use it. What is exposed is the subtraction-based `ct_lt`
+range check, and the byte conversions, on the freshly sampled secret scalar
+during key generation. The operator never signs, derives or decrypts with such a
+key. Exploiting this needs a co-resident microarchitectural timing observer
+while the key is generated. No fixed 0.5.x release exists; the fix is in
+`crypto-bigint` 0.7.6 or later, and the ignore is revisited when a stable
+`ssh-key` 0.7 ships. If you generate ECDSA keys and consider such an observer
+part of your threat model, use ed25519 (the default) instead.
 
 ## Release signing and SBOM
 
