@@ -281,6 +281,12 @@ jobs:
           file: build/Containerfile
           platforms: linux/amd64,linux/arm64
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          # Source link on the index itself, so registries (GHCR links the
+          # package to the repository by it) see it on the tagged manifest.
+          # The per-platform images keep the same value as a config label
+          # from the Containerfile.
+          annotations: |
+            index:org.opencontainers.image.source=https://github.com/jabbas/secretspec-operator
           build-args: |
             VERSION=${{ needs.verify.outputs.version }}
             REVISION=${{ github.sha }}
@@ -306,6 +312,9 @@ jobs:
           docker buildx imagetools inspect "$IMAGE@$INDEX_DIGEST" --raw > index.json
           jq . index.json
           test "$(jq '.manifests | length' index.json)" = 2
+          # The index carries the source annotation (see the build step).
+          jq -e '.annotations["org.opencontainers.image.source"] == "https://github.com/jabbas/secretspec-operator"' index.json > /dev/null \
+            || echo "::warning::the image index has no org.opencontainers.image.source annotation"
           for arch in amd64 arm64; do
             digest="$(jq -r --arg arch "$arch" \
               '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest' index.json)"
