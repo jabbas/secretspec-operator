@@ -213,13 +213,22 @@ image:
 - the **SBOM** lists the Rust crates compiled into the operator (name, version,
   `pkg:cargo/…` purl) **and** the Debian packages of the distroless base image.
   The release fails if an SBOM lists no Rust crates. It does not contain
-  licence texts, and it does not describe the chart or the Helm values;
+  licence texts (those are in the image, see below), and it does not describe
+  the chart or the Helm values;
 - the **vulnerability scan** (grype) checks the same two sets against its
   vulnerability database at the time of the release. It does not check the
   chart, the Kubernetes version or your cluster, and it cannot see anything the
   database does not know yet. The release also runs `cargo audit` and
   `cargo deny` on `Cargo.lock` (RUSTSEC advisories, licences, sources); the
   one accepted advisory is explained above.
+
+**Licence texts.** The image ships `/licenses/`: this project's `LICENSE` and
+`NOTICE`, `THIRD-PARTY-LICENSES.txt` (every compiled-in crate with version and
+SPDX licence expression) and `third-party/<crate>-<version>/` with each crate's
+licence files, so the MIT and Apache-2.0 notice requirements of the bundled
+crates are met by the artifact itself. Read them without a shell (the image is
+distroless), for example with
+`podman create --name x <image> && podman cp x:/licenses ./licenses && podman rm x`.
 
 The SBOM is a statement about a build, not a promise: a vulnerability published
 after the release is not reflected in it. Re-scan the SBOM or the image with

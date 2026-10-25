@@ -3,6 +3,7 @@
 //! Developer automation for the workspace. Run via `cargo xtask`.
 
 mod chart;
+mod licenses;
 
 use std::error::Error;
 use std::ffi::OsStr;
@@ -208,9 +209,11 @@ fn run() -> Result<ExitCode, BoxError> {
             }
         },
         ["chart-test"] => chart::chart_test(),
+        ["licenses"] => licenses::licenses(),
         _ => {
             eprintln!("usage: cargo xtask crdgen [--check]");
             eprintln!("       cargo xtask dist --target <triple> [--release]");
+            eprintln!("       cargo xtask licenses");
             eprintln!("       cargo xtask chart-test");
             Ok(ExitCode::from(2))
         }

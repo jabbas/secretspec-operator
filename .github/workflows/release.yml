@@ -179,6 +179,14 @@ jobs:
           file target/dist/amd64/secretspec-operator target/dist/arm64/secretspec-operator
           file target/dist/amd64/secretspec-operator | grep -q 'x86-64'
           file target/dist/arm64/secretspec-operator | grep -q 'aarch64'
+      # Third-party licence texts for /licenses/ in the image
+      # (build/Containerfile). Part of the `dist` artifact below.
+      - name: Collect the licence texts
+        run: |
+          cargo xtask licenses
+          test -s target/dist/licenses/LICENSE
+          test -s target/dist/licenses/NOTICE
+          test -s target/dist/licenses/THIRD-PARTY-LICENSES.txt
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist

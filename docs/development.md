@@ -206,11 +206,36 @@ The binary embeds its dependency list (cargo-auditable); the list survives
 stripping. To check it, `syft target/dist/amd64/secretspec-operator` lists the
 Rust crates (about 270).
 
+The image also carries the licence texts of everything compiled into the
+binary, in `/licenses/`: this project's `LICENSE` and `NOTICE`, an index
+(`THIRD-PARTY-LICENSES.txt`: crate, version, SPDX expression, files) and, under
+`third-party/<crate>-<version>/`, the `LICENSE*`/`COPYING*`/`NOTICE*` files of
+each crate, copied verbatim. Generate the bundle (needs only `cargo`; it reads
+`Cargo.lock` through `cargo metadata`, so the crates must be downloadable) into
+`target/dist/licenses/` before building the image:
+
+```sh
+cargo xtask licenses
+```
+
+The crates are the normal-dependency closure of the operator for both musl
+targets (dev- and build-only dependencies are not shipped). A crate whose
+published package has no licence file (today `cel` and the `kube` crates, whose
+licence is only in their repository) gets a generated `LICENSE-MIT` or
+`LICENSE-APACHE` with the canonical text, a note saying so, and the authors
+from its `Cargo.toml`; any other licence expression without a file makes the
+command fail so that someone reviews the crate (`fallback_license` in
+`xtask/src/licenses.rs`). `cargo deny list` is not used: its output formats
+list licence identifiers per crate but contain no licence texts. CI runs the
+command in the `licenses` job and before the e2e image build; the release
+workflow runs it in `build`, so the bundle is part of the `dist` artifact.
+
 Build and smoke-test the image with Podman (Docker: replace `podman` by
 `docker`); `TARGETARCH` selects the binary, and the non-host platform runs
 under emulation:
 
 ```sh
+cargo xtask licenses   # once per dependency change; the image copies target/dist/licenses/
 podman build --platform linux/amd64 \
   --build-arg VERSION=0.1.0-dev --build-arg REVISION="$(git rev-parse HEAD)" \
   -f build/Containerfile -t secretspec-operator:dev .
@@ -218,7 +243,8 @@ podman run --rm --read-only --user 65532:65532 secretspec-operator:dev --help
 ```
 
 `.dockerignore` and `.containerignore` are identical (Docker and Podman read
-different names); they send only `target/dist/` to the build.
+different names); they send only `target/dist/` to the build, which is why the
+licence bundle lives in `target/dist/licenses/`.
 
 ## End-to-end tests (chart + image) on kind
 
@@ -237,6 +263,7 @@ loaded into it:
 
 ```sh
 cargo xtask dist --target x86_64-unknown-linux-musl --release
+cargo xtask licenses
 podman build --platform linux/amd64 -f build/Containerfile \
   -t localhost/secretspec-operator:e2e .
 podman save -o "$TMPDIR/image.tar" localhost/secretspec-operator:e2e
