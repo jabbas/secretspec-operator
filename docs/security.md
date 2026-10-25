@@ -261,18 +261,19 @@ check is:
 > `:v0.1.0`, signing identity `refs/tags/v0.1.0`). Later releases use plain
 > semver tags.
 
-Set the variables for the release you are installing. The only published
-release so far is `0.1.0`, under its legacy tag:
+Set the variables for the release you are installing. For the current release,
+`0.1.1`:
 
 ```sh
-TAG=v0.1.0                 # the git/image tag (legacy v prefix)
-CHART_VERSION=0.1.0        # the chart version
+TAG=0.1.1                  # the git/image tag (plain semver)
+CHART_VERSION=0.1.1        # the chart version
 IDENTITY="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${TAG}"
 ISSUER="https://token.actions.githubusercontent.com"
 ```
 
-From 0.1.1 on, `<tag>` is the plain version and equals the chart version:
-`TAG=0.1.1` and `CHART_VERSION=0.1.1` (`0.1.1-rc.1` for a release candidate).
+From 0.1.1 on, `<tag>` is the plain version and equals the chart version
+(`0.1.1-rc.1` for a release candidate). For the legacy `0.1.0` use
+`TAG=v0.1.0` and `CHART_VERSION=0.1.0`.
 
 Verify the image (the tag resolves to the multi-arch index, which is signed):
 
