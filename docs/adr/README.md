@@ -5,3 +5,4 @@ An ADR records one significant decision: the context that forced it, the decisio
 | ADR | Title | Status |
 |---|---|---|
 | [0001](0001-semver-release-tags.md) | Semver release tags without the `v` prefix | Accepted |
+| [0002](0002-http-helm-repository.md) | HTTP Helm repository channel | Accepted |
