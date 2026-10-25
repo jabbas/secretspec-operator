@@ -179,6 +179,14 @@ jobs:
           file target/dist/amd64/secretspec-operator target/dist/arm64/secretspec-operator
           file target/dist/amd64/secretspec-operator | grep -q 'x86-64'
           file target/dist/arm64/secretspec-operator | grep -q 'aarch64'
+      # Third-party licence texts for /licenses/ in the image
+      # (build/Containerfile). Part of the `dist` artifact below.
+      - name: Collect the licence texts
+        run: |
+          cargo xtask licenses
+          test -s target/dist/licenses/LICENSE
+          test -s target/dist/licenses/NOTICE
+          test -s target/dist/licenses/THIRD-PARTY-LICENSES.txt
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
@@ -273,6 +281,12 @@ jobs:
           file: build/Containerfile
           platforms: linux/amd64,linux/arm64
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          # Source link on the index itself, so registries (GHCR links the
+          # package to the repository by it) see it on the tagged manifest.
+          # The per-platform images keep the same value as a config label
+          # from the Containerfile.
+          annotations: |
+            index:org.opencontainers.image.source=https://github.com/jabbas/secretspec-operator
           build-args: |
             VERSION=${{ needs.verify.outputs.version }}
             REVISION=${{ github.sha }}
@@ -298,6 +312,14 @@ jobs:
           docker buildx imagetools inspect "$IMAGE@$INDEX_DIGEST" --raw > index.json
           jq . index.json
           test "$(jq '.manifests | length' index.json)" = 2
+          # The index carries the source annotation (see the build step). A
+          # malformed index.json already failed at `jq .` above, and a failing
+          # jq in the assignment stops the step too.
+          source="$(jq -r '.annotations["org.opencontainers.image.source"] // ""' index.json)"
+          if [[ "$source" != "https://github.com/jabbas/secretspec-operator" ]]; then
+            echo "::error::the image index has the source annotation '$source', not the repository URL"
+            exit 1
+          fi
           for arch in amd64 arm64; do
             digest="$(jq -r --arg arch "$arch" \
               '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest' index.json)"

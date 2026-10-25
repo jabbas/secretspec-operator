@@ -143,11 +143,18 @@ pods`), that the CRD matches the chart, and — in namespace mode — that the
 | `GenerationFailed` | `False` | Generating a value failed inside the operator (SSH key library, bcrypt) — not a problem of your spec. Message: `value generation failed: <cause>`. Retried after **30 seconds**. If it persists, report a bug. |
 | `WaitingForGarbageCollection` | `False` | The Secret still has an owner reference to a *deleted* `SecretSpec` of the same name (you deleted and re-created it quickly under `Delete`). The operator waits and re-checks every 5 seconds instead of adopting the Secret. It resolves when Kubernetes garbage collection finishes; if it lasts minutes, the garbage collector is stuck (check the controller manager). No Event is emitted for this reason. |
 
-A `Conflict` or `InvalidSpec` is re-evaluated when the `SecretSpec` changes, when
-a Secret the operator manages changes, and at the periodic resync (default one
-hour, `resyncInterval`). Deleting a *foreign* Secret that caused a `Conflict` is
-therefore noticed at the next resync at the latest. To make the operator look
-immediately, restart it; this is safe, values never change on restart:
+A `Conflict` is re-checked about **every minute** (or at the periodic resync,
+if that is shorter): the operator's Secret watch only sees Secrets that carry
+its labels, so it cannot notice by itself that a *foreign* blocker is gone.
+Delete the foreign Secret (or rename the `SecretSpec`) and the status turns
+`Generated` within about a minute, without a restart. Each re-check plans the
+same `Conflict` event again; Kubernetes aggregates identical events into a
+series, so `kubectl describe` shows one event with a growing count.
+
+An `InvalidSpec` is re-evaluated when the `SecretSpec` changes, when a Secret
+the operator manages changes, and at the periodic resync (default one hour,
+`resyncInterval`). To make the operator look immediately, restart it; this is
+safe, values never change on restart:
 
 ```sh
 kubectl --namespace secretspec-system rollout restart deployment/secretspec-operator

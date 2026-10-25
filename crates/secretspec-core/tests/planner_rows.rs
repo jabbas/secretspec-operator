@@ -19,7 +19,7 @@ use secretspec_api::constants::{
     MANAGED_BY_VALUE, REASON_CONFLICT, REASON_GENERATED,
 };
 use secretspec_api::v1alpha1::SecretKind;
-use secretspec_core::plan::{Plan, SecretAction, plan};
+use secretspec_core::plan::{CONFLICT_REQUEUE, Plan, SecretAction, plan};
 use support::{
     DAY, SPEC_NAME, SPEC_NAMESPACE, SPEC_UID, annotation, applied, earlier, foreign_secret, later,
     next_generation, now, reasons, secret_spec, seeded_rng, string_map, value, with_status,
@@ -758,7 +758,10 @@ fn row_15_foreign_secret_is_a_conflict() {
         plan.events[0].message,
         "Secret db exists and is not managed by this SecretSpec"
     );
-    assert_eq!(plan.requeue_after, None);
+    // The label-filtered Secret watch never sees a foreign blocker go away,
+    // so the conflict is re-checked on a short timer.
+    assert_eq!(plan.requeue_after, Some(CONFLICT_REQUEUE));
+    assert_eq!(CONFLICT_REQUEUE, Duration::from_secs(60));
 
     // Our labels, but controlled by something other than a SecretSpec: a
     // conflict, never a wait for garbage collection.
@@ -785,7 +788,7 @@ fn row_15_foreign_secret_is_a_conflict() {
         p.events[0].message,
         "Secret db is controlled by Deployment web (apps/v1) and not by a SecretSpec"
     );
-    assert_eq!(p.requeue_after, None);
+    assert_eq!(p.requeue_after, Some(CONFLICT_REQUEUE));
 }
 
 #[test]
@@ -884,7 +887,7 @@ fn row_18_type_mismatch_is_a_conflict() {
     assert!(p.events[0].warning);
     assert_eq!(p.events[0].reason, EVENT_CONFLICT);
     assert_eq!(p.events[0].message, ready.message);
-    assert_eq!(p.requeue_after, None);
+    assert_eq!(p.requeue_after, Some(CONFLICT_REQUEUE));
 }
 
 #[test]

@@ -50,6 +50,16 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - run: cargo xtask crdgen --check
 
+  # The third-party licence bundle that build/Containerfile copies to
+  # /licenses/ must be generatable (every crate has, or has a fallback for,
+  # a licence text).
+  licenses:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+      - run: cargo xtask licenses
+
   # Lints the Helm chart and checks its rendered objects (RBAC, image
   # reference, security context, env, probes, CRD) for several value sets.
   chart:
@@ -181,6 +191,9 @@ jobs:
         env:
           CARGO_BUILD_WARNINGS: warn
         run: cargo xtask dist --target x86_64-unknown-linux-musl --release
+      # build/Containerfile copies the bundle to /licenses/.
+      - name: Collect the licence texts
+        run: cargo xtask licenses
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           # BuildKit v0.34.1, pinned by index digest.

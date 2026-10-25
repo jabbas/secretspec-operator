@@ -46,6 +46,12 @@ use crate::plan::status::{Readiness, Times};
 /// being garbage-collected.
 pub const WAIT_FOR_GC_REQUEUE: Duration = Duration::from_secs(5);
 
+/// How long to wait before looking again while a Secret blocks the target name
+/// (status `Conflict`). The operator's Secret watch only sees Secrets that
+/// carry its labels, so removing a foreign blocker would otherwise go
+/// unnoticed until the periodic resync.
+pub const CONFLICT_REQUEUE: Duration = Duration::from_secs(60);
+
 /// How long to wait before retrying after a generation failure.
 pub const GENERATION_RETRY: Duration = Duration::from_secs(30);
 
@@ -157,7 +163,7 @@ pub fn plan<R: CryptoRngCore + ?Sized>(
     let owner = ownership(existing, spec);
     match &owner {
         Ownership::Conflict(message) => {
-            return halted(spec, kind, conflict(message.clone()), now);
+            return halted_on_conflict(spec, kind, message.clone(), now);
         }
         Ownership::WaitForGc => {
             let readiness = Readiness {
@@ -191,7 +197,7 @@ pub fn plan<R: CryptoRngCore + ?Sized>(
             inv.secret_type,
             secret_type(&resolved)
         );
-        return halted(spec, kind, conflict(message), now);
+        return halted_on_conflict(spec, kind, message, now);
     }
 
     let anchor = inv.as_ref().map_or(Anchor::Absent, |inv| inv.generated_at);
@@ -314,6 +320,20 @@ pub fn halt_for_generate_error(
         whole_seconds(now),
     );
     plan.requeue_after = Some(GENERATION_RETRY);
+    plan
+}
+
+/// A [`halted`] plan for a `Conflict` that looks again in
+/// [`CONFLICT_REQUEUE`]. Status, events and the (absent) write are exactly
+/// those of any other halt; only the requeue differs.
+fn halted_on_conflict(
+    spec: &SecretSpec,
+    kind: Option<SecretKind>,
+    message: String,
+    now: Timestamp,
+) -> Plan {
+    let mut plan = halted(spec, kind, conflict(message), now);
+    plan.requeue_after = Some(CONFLICT_REQUEUE);
     plan
 }
 

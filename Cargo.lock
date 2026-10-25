@@ -3495,6 +3495,7 @@ dependencies = [
  "kube",
  "secretspec-api",
  "serde",
+ "serde_json",
  "serde_norway",
 ]
 
