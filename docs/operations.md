@@ -203,6 +203,31 @@ exits, and the pod restarts (a short pause, no value changes). To hand over
 leadership on purpose, restart the leader pod instead. The Lease has no
 effect on generated values.
 
+### Debugging inside the pod
+
+The image is built `FROM scratch` (since 0.1.2): it has no shell and no tools,
+so `kubectl exec … -- sh` fails. Logs, Events and metrics (see above) are the
+first source. For an interactive look, attach an
+[ephemeral debug container](https://kubernetes.io/docs/tasks/debug/debug-application/debug-running-pod/#ephemeral-container)
+that brings its own tools and shares the operator's process namespace:
+
+```sh
+kubectl -n secretspec-system debug -it <operator-pod> --image=busybox:stable \
+  --target=operator --profile=restricted
+```
+
+`--profile=restricted` is needed when the namespace enforces the Pod Security
+Standard `restricted` (the default `general` profile adds `SYS_PTRACE`, which
+the admission rejects). The operator container keeps its read-only root
+filesystem and its non-root user; the debug container is a separate container
+with its own filesystem, running as the same non-root user. From it, the
+operator's files are visible under `/proc/1/root/` (for example
+`/proc/1/root/licenses/`) and the health endpoint answers on
+`http://127.0.0.1:8080/healthz`. (Images of 0.1.0 and 0.1.1 are distroless and
+have no shell either.) To debug a node-level or startup problem, `kubectl debug node/<node>
+--image=…` or a copy of the pod (`kubectl debug <pod> --copy-to=… --image=…`)
+work as usual.
+
 ## Using SecretSpec in a Helm chart
 
 Application charts usually share a "common labels" helper. The standard one

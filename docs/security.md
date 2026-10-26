@@ -91,7 +91,13 @@ The chart grants exactly the following, and nothing more:
 
 The pod complies with the Pod Security Standard `restricted`: non-root,
 read-only root file system, all capabilities dropped, no privilege escalation,
-seccomp `RuntimeDefault`. The image is a static binary on a distroless image.
+seccomp `RuntimeDefault`. The image is built `FROM scratch`: it contains the
+static operator binary and `/licenses/`, nothing else. There is no operating
+system layer, no shell, no package manager and no libc, so there is nothing to
+patch besides the binary itself and nothing a vulnerability scanner can match
+other than its Rust crates. (Images of 0.1.0 and 0.1.1 are built on distroless
+`static-debian12:nonroot`, whose upstream stopped publishing updates in August
+2026.)
 
 ## What is cached
 
@@ -211,12 +217,15 @@ embedded list survives stripping. syft and grype read it, so for each platform
 image:
 
 - the **SBOM** lists the Rust crates compiled into the operator (name, version,
-  `pkg:cargo/…` purl) **and** the Debian packages of the distroless base image.
-  The release fails if an SBOM lists no Rust crates. It does not contain
+  `pkg:cargo/…` purl) and nothing else: the image is `FROM scratch`, so there
+  is no OS layer and no OS packages (the SBOMs of 0.1.0 and 0.1.1 also list the
+  Debian packages of their distroless base). The release fails if an SBOM
+  lists fewer than 100 Rust crates. It does not contain
   licence texts (those are in the image, see below), and it does not describe
   the chart or the Helm values;
-- the **vulnerability scan** (grype) checks the same two sets against its
-  vulnerability database at the time of the release. It does not check the
+- the **vulnerability scan** (grype) checks the same set, the binary's crates,
+  against its vulnerability database at the time of the release. It does not
+  check the
   chart, the Kubernetes version or your cluster, and it cannot see anything the
   database does not know yet. The release also runs `cargo audit` and
   `cargo deny` on `Cargo.lock` (RUSTSEC advisories, licences, sources); the
@@ -230,7 +239,7 @@ and Apache-2.0 notice requirements of the bundled crates are met by the
 artifact itself. The release build fails if a crate's licence files do not
 cover its declared licence. The five `kube` crates publish no licence file;
 for them the bundle holds the canonical Apache-2.0 text with a note saying it
-was generated. Read the files without a shell (the image is distroless), for
+was generated. Read the files without a shell (the image has none), for
 example with
 `podman create --name x <image> && podman cp x:/licenses ./licenses && podman rm x`.
 
