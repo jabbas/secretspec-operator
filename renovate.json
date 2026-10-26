@@ -9,7 +9,7 @@
   "timezone": "Europe/Warsaw",
   "prConcurrentLimit": 5,
   "labels": ["dependencies"],
-  "enabledManagers": ["cargo", "github-actions", "dockerfile"],
+  "enabledManagers": ["cargo", "github-actions"],
   "lockFileMaintenance": {
     "enabled": true,
     "schedule": ["before 6am on monday"]
@@ -48,14 +48,6 @@
       "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["major"],
       "semanticCommitType": "ci",
-      "semanticCommitScope": "deps"
-    },
-    {
-      "description": "Containerfile base image: keep the digest pin current",
-      "matchManagers": ["dockerfile"],
-      "pinDigests": true,
-      "groupName": "container base images",
-      "semanticCommitType": "build",
       "semanticCommitScope": "deps"
     }
   ]

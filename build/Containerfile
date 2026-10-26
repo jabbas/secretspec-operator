@@ -1,12 +1,23 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# Runtime image: the prebuilt static musl binary on distroless `static`.
+# Runtime image: the prebuilt static musl binary on an empty root (`scratch`).
 # Build the binaries first (`cargo xtask dist --target <triple> --release`);
 # see docs/development.md, "Building the image".
-
-# Base pinned by digest (multi-arch index of static-debian12:nonroot).
-# Renovate keeps the digest current.
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+#
+# Nothing is needed from a base image, so there is none (nothing to patch,
+# nothing for a scanner to find besides the binary's own crates):
+#   - TLS: the kube client trusts the ServiceAccount CA mounted by Kubernetes,
+#     and rustls brings its own root store; no /etc/ssl is read;
+#   - time: UTC only, no /usr/share/zoneinfo;
+#   - the process writes nothing to disk (read-only root filesystem), so no
+#     /tmp and no home directory;
+#   - the user is numeric, so no /etc/passwd is needed.
+# Image config that distroless used to set and is dropped on purpose: PATH
+# (the ENTRYPOINT is an absolute path and there is no shell to search for
+# anything; some builders inject a default PATH into the config anyway, which
+# is harmless), SSL_CERT_FILE (see TLS above) and WORKDIR /home/nonroot (the
+# working directory stays `/`; nothing is read or written relative to it).
+FROM scratch
 
 # Re-declared: build args are only visible in the stage that declares them.
 ARG TARGETARCH
@@ -26,5 +37,7 @@ COPY target/dist/${TARGETARCH}/secretspec-operator /secretspec-operator
 # `cargo xtask licenses` (run it before the build).
 COPY target/dist/licenses/ /licenses/
 
+# Numeric on purpose: there is no /etc/passwd to resolve a name. The chart sets
+# runAsUser/runAsGroup 65532 as well.
 USER 65532:65532
 ENTRYPOINT ["/secretspec-operator"]

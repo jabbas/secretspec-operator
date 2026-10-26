@@ -152,8 +152,8 @@ jobs:
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           # cargo-auditable embeds the dependency list in the binary, so the
-          # SBOM and the vulnerability scan see the crates, not only the
-          # distroless packages.
+          # SBOM and the vulnerability scan see the crates. The image is
+          # `FROM scratch`, so the binary's crates are all there is to see.
           tool: cargo-zigbuild@0.23.4,cargo-auditable@0.7.7
       - name: Install zig
         run: |
@@ -327,7 +327,9 @@ jobs:
             echo "$arch=$digest" >> "$GITHUB_OUTPUT"
           done
       # Vulnerability scan of the pushed digests. Fails on a fixable
-      # high/critical finding, before anything is signed.
+      # high/critical finding, before anything is signed. The image has no OS
+      # layer, so grype sees only the crates embedded by cargo-auditable; the
+      # next step fails the release if that data is missing (an empty scan).
       - name: Scan the image
         env:
           GRYPE_CHECK_FOR_APP_UPDATE: "false"
@@ -347,8 +349,10 @@ jobs:
           syft "registry:$IMAGE@$DIGEST_ARM64" -o "spdx-json=sbom/secretspec-operator-${TAG}-linux-arm64.spdx.json"
           ls -l sbom
           # The binary is built with cargo-auditable: each SBOM must list the
-          # Rust crates (pkg:cargo/...) next to the distroless packages. A
-          # build that lost the embedded data would otherwise go unnoticed.
+          # Rust crates (pkg:cargo/...). The image is `FROM scratch`: there
+          # are no OS packages, so without the embedded data the SBOM (and the
+          # grype scan above) would be empty and a build that lost it would go
+          # unnoticed.
           for sbom in sbom/*.spdx.json; do
             crates="$(jq '[.packages[] | select(any(.externalRefs[]?; (.referenceLocator // "") | startswith("pkg:cargo/")))] | length' "$sbom")"
             echo "$sbom: $crates Rust crates"
