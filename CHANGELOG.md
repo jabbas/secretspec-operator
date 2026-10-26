@@ -12,7 +12,8 @@ All notable changes are documented here. The format follows
   `gcr.io/distroless/static-debian12:nonroot`: it contains only the static
   operator binary and `/licenses/`. Distroless stopped building its `debian12`
   images, so the digest-pinned base was frozen and unpatched. The binary needs
-  nothing from a base image (ServiceAccount CA and rustls' embedded roots,
+  nothing from a base image when run by the chart (in-cluster the API server
+  CA comes from the mounted ServiceAccount, so no system CA bundle is needed;
   UTC only, no disk writes, numeric user `65532:65532`). The SBOM and the
   vulnerability scan now cover only the crates compiled into the binary; there
   is no OS layer. There is still no shell: use `kubectl debug` for an ephemeral

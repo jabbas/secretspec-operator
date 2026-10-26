@@ -10,7 +10,7 @@
 - The distroless project stopped building all `*-debian12` images on 2026-08-11 (GoogleContainerTools/distroless PR #2156; its support policy listed the static-debian12 EOL as September 2026). The pinned base is therefore frozen and unpatched.
 - Renovate tracks the digest of a tag, so it cannot signal an EOL: the tag simply stopped moving.
 - The operator binary is statically linked (musl) and takes nothing from the base image:
-  - the kube client uses the ServiceAccount CA, and rustls brings its own embedded roots;
+  - in-cluster (the supported deployment, via the chart) the kube client takes the API server CA from the mounted ServiceAccount (`ca.crt`), so no system CA bundle is needed; the workspace does not enable `webpki-roots`, and without an explicit CA kube-client falls back to `rustls-platform-verifier`, which reads the system roots (see Consequences);
   - time is UTC only;
   - it writes nothing (the root filesystem is read-only);
   - it runs as the numeric UID/GID 65532.
@@ -32,4 +32,5 @@
 - There is no shell in the image. Debugging uses ephemeral containers (`kubectl debug --profile=restricted`).
 - Renovate's dockerfile manager is removed; nothing in the Containerfile is left to track.
 - The 0.1.0 and 0.1.1 images keep the frozen debian12 base, and their SBOMs list Debian packages.
-- Verified before merging, with the scratch image on kind 1.37.0: e2e 6/6 and operator integration 12/12. The image filesystem contains only the binary and `/licenses/`.
+- The image contains no system CA bundle. Running it against a cluster whose kubeconfig has no explicit CA is not supported; this does not affect chart installs, which use the ServiceAccount CA.
+- Verified before merging, with the scratch image on kind 1.37.0: the e2e suite passes 6/6 (it runs the scratch image through the chart). The operator integration suite passes 12/12, but it runs the operator in-process, so it does not exercise the image. The image filesystem contains only the binary and `/licenses/`.

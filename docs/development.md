@@ -179,9 +179,12 @@ SECRETSPEC_TEST_LOG=1 SECRETSPEC_TEST_KUBECONFIG=… \
 
 The image is the prebuilt static musl binary on `scratch` (`build/Containerfile`):
 it contains only `/secretspec-operator` and `/licenses/`, no OS packages, no
-shell, no CA bundle and no `/etc/passwd`. The binary needs none of them (the
-ServiceAccount CA and rustls' embedded roots cover TLS, time is UTC, nothing is
-written to disk), and the numeric user keeps working without a passwd entry.
+shell, no CA bundle and no `/etc/passwd`. The binary needs none of them when
+run by the chart: in-cluster the API server CA comes from the mounted
+ServiceAccount (`ca.crt`), time is UTC, nothing is written to disk, and the
+numeric user works without a passwd entry. (Against a kubeconfig without an
+explicit CA the kube client would read the system roots, which the image does
+not have; that use is not supported.)
 It runs as UID/GID 65532 and works with a read-only root filesystem. There is
 no base image to pin or to update, and Renovate has nothing to track in the
 Containerfile. Releases 0.1.0 and 0.1.1 were built on distroless

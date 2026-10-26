@@ -93,9 +93,14 @@ The pod complies with the Pod Security Standard `restricted`: non-root,
 read-only root file system, all capabilities dropped, no privilege escalation,
 seccomp `RuntimeDefault`. The image is built `FROM scratch`: it contains the
 static operator binary and `/licenses/`, nothing else. There is no operating
-system layer, no shell, no package manager and no libc, so there is nothing to
-patch besides the binary itself and nothing a vulnerability scanner can match
-other than its Rust crates. (Images of 0.1.0 and 0.1.1 are built on distroless
+system layer, no shell, no package manager and no shared OS libc (musl is
+statically linked into the binary), so there is nothing to patch besides the
+binary itself and nothing a vulnerability scanner can match other than its Rust
+crates. The image has no system CA bundle: the operator trusts the API server
+through the ServiceAccount CA mounted into the pod, which is how the chart runs
+it. Running the image against a cluster whose kubeconfig has no explicit CA is
+not supported, because the kube client would then look for system roots that
+are not there. (Images of 0.1.0 and 0.1.1 are built on distroless
 `static-debian12:nonroot`, whose upstream stopped publishing updates in August
 2026.)
 
@@ -213,8 +218,9 @@ which:
 **What the SBOM and the scan cover.** The operator binary is built with
 [cargo-auditable](https://github.com/rust-secure-code/cargo-auditable), which
 embeds the exact list of Rust crates (from `Cargo.lock`) in the binary; the
-embedded list survives stripping. syft and grype read it, so for each platform
-image:
+embedded list survives stripping. It inventories Cargo packages only, not C
+components statically linked into the binary (such as musl or C code built by
+a `-sys` crate). syft and grype read it, so for each platform image:
 
 - the **SBOM** lists the Rust crates compiled into the operator (name, version,
   `pkg:cargo/…` purl) and nothing else: the image is `FROM scratch`, so there

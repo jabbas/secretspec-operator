@@ -6,8 +6,11 @@
 #
 # Nothing is needed from a base image, so there is none (nothing to patch,
 # nothing for a scanner to find besides the binary's own crates):
-#   - TLS: the kube client trusts the ServiceAccount CA mounted by Kubernetes,
-#     and rustls brings its own root store; no /etc/ssl is read;
+#   - TLS: in-cluster (the supported deployment, via the chart) the kube client
+#     trusts the API server CA from the mounted ServiceAccount (ca.crt), so no
+#     system CA bundle is needed. Without an explicit CA, kube-client would use
+#     rustls-platform-verifier, which reads the system roots (this image has
+#     none; running it against a kubeconfig with no CA is not supported);
 #   - time: UTC only, no /usr/share/zoneinfo;
 #   - the process writes nothing to disk (read-only root filesystem), so no
 #     /tmp and no home directory;
