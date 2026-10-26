@@ -4,7 +4,16 @@ All notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Until the API leaves
 `v1alpha1`, a breaking change is always listed under its release.
 
-## Unreleased
+## 0.1.2 - 2026-10-26
+
+### Added
+
+- **[ADR 0003](docs/adr/0003-scratch-base-image.md)** records the decision to
+  build the image from scratch, and
+  [Operations](docs/operations.md#debugging-inside-the-pod) documents debugging
+  with an ephemeral container (`kubectl debug … --target=operator
+  --profile=restricted`; the `restricted` profile is needed in namespaces that
+  enforce the Pod Security Standard `restricted`).
 
 ### Changed
 
@@ -14,11 +23,13 @@ All notable changes are documented here. The format follows
   images, so the digest-pinned base was frozen and unpatched. The binary needs
   nothing from a base image when run by the chart (in-cluster the API server
   CA comes from the mounted ServiceAccount, so no system CA bundle is needed;
-  UTC only, no disk writes, numeric user `65532:65532`). The SBOM and the
-  vulnerability scan now cover only the crates compiled into the binary; there
-  is no OS layer. There is still no shell: use `kubectl debug` for an ephemeral
-  debug container. The `0.1.0` and `0.1.1` images keep the frozen distroless
-  `debian12` base. Renovate no longer tracks the Containerfile.
+  UTC only, no disk writes, numeric user `65532:65532`). Running the image
+  against a cluster whose kubeconfig has no explicit CA is not supported, as
+  there are no system CA roots. The SBOM and the vulnerability scan now cover
+  only the crates compiled into the binary; there is no OS layer. There is
+  still no shell: use `kubectl debug` for an ephemeral debug container. The
+  `0.1.0` and `0.1.1` images keep the frozen distroless `debian12` base.
+  Renovate no longer tracks the Containerfile.
 
 ## 0.1.1 - 2026-10-26
 

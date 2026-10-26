@@ -2518,7 +2518,7 @@ dependencies = [
 
 [[package]]
 name = "secretspec-api"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "k8s-openapi",
  "kube",
@@ -2532,7 +2532,7 @@ dependencies = [
 
 [[package]]
 name = "secretspec-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bcrypt",
  "data-encoding",
@@ -2553,7 +2553,7 @@ dependencies = [
 
 [[package]]
 name = "secretspec-operator"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -3489,7 +3489,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "xtask"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "k8s-openapi",
  "kube",

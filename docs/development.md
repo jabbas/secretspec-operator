@@ -348,11 +348,11 @@ the release date (for the final release). Do this in a pull request and merge it
 to `main`.
 
 **Release candidates do not change any of these files.** The committed versions
-are the *final* version (`0.1.1`); the tag `0.1.1-rc.1` is checked against it
+are the *final* version (`0.1.2`); the tag `0.1.2-rc.1` is checked against it
 (the part before `-rc.N` must equal the workspace version), and the workflow
 injects the rc version only while packaging the chart
-(`helm package --version 0.1.1-rc.1 --app-version 0.1.1-rc.1`), so the packaged
-chart installs the image `…:0.1.1-rc.1`.
+(`helm package --version 0.1.2-rc.1 --app-version 0.1.2-rc.1`), so the packaged
+chart installs the image `…:0.1.2-rc.1`.
 
 ### Tag
 
@@ -362,16 +362,16 @@ exist.
 
 ```sh
 git switch main && git pull --ff-only
-git tag -a 0.1.1-rc.1 -m 0.1.1-rc.1      # release candidate
-git push origin 0.1.1-rc.1
+git tag -a 0.1.2-rc.1 -m 0.1.2-rc.1      # release candidate
+git push origin 0.1.2-rc.1
 # after the candidate has been tried out:
-git tag -a 0.1.1 -m 0.1.1                # final release
-git push origin 0.1.1
+git tag -a 0.1.2 -m 0.1.2                # final release
+git push origin 0.1.2
 ```
 
 Verify a published release with the commands in
 [Installation](installation.md#verify-the-release-optional-but-recommended) (the signing identity
-is `…/release.yml@refs/tags/0.1.1`, i.e. the tag itself).
+is `…/release.yml@refs/tags/0.1.2`, i.e. the tag itself).
 
 #### When a release run fails
 
@@ -514,7 +514,7 @@ touched, and it does not close your terminal:
 ```sh
 (
 set -euo pipefail
-TAG=0.1.1                  # the release tag; the version equals the tag
+TAG=0.1.2                  # the release tag; the version equals the tag
 VERSION="${TAG}"
 IDENTITY="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${TAG}"
 ISSUER="https://token.actions.githubusercontent.com"
