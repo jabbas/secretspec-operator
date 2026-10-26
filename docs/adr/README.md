@@ -7,3 +7,4 @@ An ADR records one significant decision: the context that forced it, the decisio
 | [0001](0001-semver-release-tags.md) | Semver release tags without the `v` prefix | Accepted |
 | [0002](0002-http-helm-repository.md) | HTTP Helm repository channel | Accepted |
 | [0003](0003-scratch-base-image.md) | Build the image from scratch | Accepted |
+| [0004](0004-release-gate-from-main-ci.md) | Release gate from main CI | Accepted |

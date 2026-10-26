@@ -60,7 +60,7 @@ scenario() {
 run() {
   local conclusion="null"
   [[ "$5" == null ]] || conclusion="\"$5\""
-  printf '{"event":"%s","head_branch":"%s","head_sha":"%s","status":"%s","conclusion":%s}' \
+  printf '{"path":".github/workflows/ci.yml","event":"%s","head_branch":"%s","head_sha":"%s","status":"%s","conclusion":%s}' \
     "$1" "$2" "$3" "$4" "$conclusion"
 }
 
@@ -80,12 +80,13 @@ answer_error() {
   : > "$case_dir/answer.$answers.error"
 }
 
-# execute [seconds-timeout] : runs ci-status.sh against $SHA.
+# execute [timeout-seconds [sha [interval-seconds]]]: runs ci-status.sh.
 execute() {
   rc=0
   out="$(
     PATH="$work/bin:$PATH" FAKE_GH_DIR="$case_dir" GITHUB_REPOSITORY=example/repo \
-      GH_TOKEN=unused CI_STATUS_INTERVAL=1 CI_STATUS_TIMEOUT="${1:-5}" \
+      GH_TOKEN=unused CI_STATUS_INTERVAL="${3:-1}" CI_STATUS_TIMEOUT="${1:-5}" \
+      CI_STATUS_ATTEMPTS=3 CI_STATUS_RETRY_WAIT=0 \
       bash "$script" "${2:-$SHA}" 2>&1
   )" || rc=$?
 }
@@ -167,6 +168,23 @@ answer "$(run push feature "$SHA" completed success)" \
 execute
 expect_fail "push on another branch, another SHA, other events do not count" "no successful CI run"
 
+scenario pr-success-push-pending
+answer "$(run pull_request feature "$SHA" completed success)" "$(run push main "$SHA" in_progress null)"
+answer "$(run pull_request feature "$SHA" completed success)" "$(run push main "$SHA" completed failure)"
+execute
+expect_fail "a successful PR run does not end the wait for a push run in progress" "concluded: failure"
+expect_calls 2 "waited for the push run"
+
+scenario wrong-workflow-path
+answer '{"path":".github/workflows/other.yml","event":"push","head_branch":"main","head_sha":"'"$SHA"'","status":"completed","conclusion":"success"}'
+execute
+expect_fail "a run of another workflow file does not count" "no successful CI run"
+
+scenario completed-null-conclusion
+answer "$(run push main "$SHA" completed null)"
+execute
+expect_fail "completed without a conclusion fails" "no successful CI run"
+
 scenario pr-pending-ignored
 answer "$(run pull_request feature "$SHA" in_progress null)"
 execute
@@ -183,13 +201,45 @@ expect_fail "no runs at all fails" "commit $SHA has no successful CI run from a 
 scenario api-error
 answer_error
 execute
-expect_fail "an API error fails" "gh api failed"
+expect_fail "a persistent API error fails" "gh api failed 3 time(s)"
+expect_calls 3 "a persistent API error is retried, then given up"
+
+scenario api-error-transient
+answer_error
+answer "$(run push main "$SHA" completed success)"
+execute
+expect_pass "one transient API error, then success, passes"
+expect_calls 2 "the transient error was retried once"
+
+scenario api-error-twice-transient
+answer_error
+answer_error
+answer "$(run push main "$SHA" completed success)"
+execute
+expect_pass "two transient API errors, then success, pass"
 
 scenario api-error-while-waiting
 answer "$(run push main "$SHA" in_progress null)"
 answer_error
 execute
-expect_fail "an API error while polling fails" "gh api failed"
+expect_fail "API errors while polling fail" "gh api failed"
+
+scenario api-error-then-no-run
+answer_error
+answer
+execute
+expect_fail "a retried API error is never taken for success, an empty list still fails" "no successful CI run"
+
+scenario api-malformed-element
+answer_raw '{"total_count":1,"workflow_runs":[1]}'
+execute
+expect_fail "a run list element that is not an object fails" "not a workflow-run list"
+expect_calls 1 "no retry for a malformed answer"
+
+scenario api-null-element
+answer_raw '{"total_count":1,"workflow_runs":[null]}'
+execute
+expect_fail "a null run list element fails" "not a workflow-run list"
 
 scenario api-garbage
 answer_raw '{"message":"Not Found"}'
@@ -200,6 +250,7 @@ scenario api-truncated
 answer_raw '{"total_count":3,"workflow_runs":[]}'
 execute
 expect_fail "a cut-off list fails" "not all were returned"
+expect_calls 1 "no retry for a cut-off list"
 
 scenario api-html
 answer_raw '<html>rate limited</html>'
@@ -211,6 +262,12 @@ scenario timeout
 answer "$(run push main "$SHA" in_progress null)"
 execute 2
 expect_fail "still in_progress at the timeout fails" "still running after 2s"
+
+scenario zero-interval
+answer "$(run push main "$SHA" in_progress null)"
+execute 3 "$SHA" 0
+expect_fail "a zero interval still times out" "still running after 3s"
+expect_calls 4 "a zero interval counts one second per poll"
 
 # --- arguments ----------------------------------------------------------------------------
 scenario bad-sha

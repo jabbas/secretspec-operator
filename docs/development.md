@@ -441,9 +441,11 @@ Cut the next candidate (`-rc.2`) or patch version instead, and do not re-tag, wh
 | `release` | Creates the GitHub Release (pre-release for `-rc.N`) with generated notes, the chart package, the SBOMs and `SHA256SUMS`. |
 | `helm-index` | Adds the version to the HTTP Helm repository `jabbas/helm-charts` after checking the package against the signed OCI chart. See below. |
 
-The release workflow uses **no caches**: no Rust cache and no QEMU image cache is
-restored or saved (`cache: false` on every `setup-rust-toolchain`, `cache-image:
-false` on `setup-qemu-action`). The builds produce signed artifacts, so nothing
+The release workflow uses **no caches**: no Rust cache, no QEMU image cache and no
+buildx binary cache is restored or saved (`cache: false` on every
+`setup-rust-toolchain`, `cache-image: false` on `setup-qemu-action`,
+`cache-binary: false` on `setup-buildx-action`). Design record:
+[ADR 0004](adr/0004-release-gate-from-main-ci.md). The builds produce signed artifacts, so nothing
 restored may end up in them, and a cache saved under a tag ref can only be
 restored by that same tag, so it would only fill the repository's cache quota.
 `ci.yml` keeps its caches, but saves them only on `main` (`cache-save-if`); pull
