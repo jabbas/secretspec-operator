@@ -28,7 +28,7 @@ Run the `kubectl` commands from a clone of this repository.
 
 ```sh
 helm repo add jabbas https://jabbas.github.io/helm-charts
-helm install secretspec-operator jabbas/secretspec-operator --version 0.1.1 --namespace secretspec-system --create-namespace --wait
+helm install secretspec-operator jabbas/secretspec-operator --version 0.1.2 --namespace secretspec-system --create-namespace --wait
 kubectl apply -f examples/app-admin-password.yaml
 kubectl wait --for=condition=Ready secretspec/app-admin --timeout=60s
 kubectl get secretspec app-admin

@@ -5,8 +5,8 @@ description: Kubernetes operator that generates and rotates Secrets from SecretS
 type: application
 # Chart version = app version = image tag = git release tag (plain semver).
 # The only exception is 0.1.0, released under the legacy tag `v0.1.0`.
-version: 0.1.1
-appVersion: "0.1.1"
+version: 0.1.2
+appVersion: "0.1.2"
 home: https://github.com/jabbas/secretspec-operator
 sources:
   - https://github.com/jabbas/secretspec-operator

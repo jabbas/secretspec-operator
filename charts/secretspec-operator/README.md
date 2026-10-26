@@ -11,7 +11,7 @@ ServiceMonitor.
 ```sh
 helm install secretspec-operator \
   oci://ghcr.io/jabbas/charts/secretspec-operator \
-  --version 0.1.1 \
+  --version 0.1.2 \
   --namespace secretspec-system --create-namespace
 ```
 
@@ -21,7 +21,7 @@ cluster-wide RBAC except the CRD):
 ```sh
 helm install secretspec-operator \
   oci://ghcr.io/jabbas/charts/secretspec-operator \
-  --version 0.1.1 \
+  --version 0.1.2 \
   --namespace secretspec-system --create-namespace \
   --set 'watchNamespaces={team-a,team-b}'
 ```
