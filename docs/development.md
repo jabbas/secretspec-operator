@@ -177,10 +177,19 @@ SECRETSPEC_TEST_LOG=1 SECRETSPEC_TEST_KUBECONFIG=… \
 
 ## Building the image
 
-The image is the prebuilt static musl binary on
-`gcr.io/distroless/static-debian12:nonroot` (pinned by digest in
-`build/Containerfile`); it runs as UID/GID 65532 and works with a read-only
-root filesystem. Binaries are cross-compiled with
+The image is the prebuilt static musl binary on `scratch` (`build/Containerfile`):
+it contains only `/secretspec-operator` and `/licenses/`, no OS packages, no
+shell, no CA bundle and no `/etc/passwd`. The binary needs none of them when
+run by the chart: in-cluster the API server CA comes from the mounted
+ServiceAccount (`ca.crt`), time is UTC, nothing is written to disk, and the
+numeric user works without a passwd entry. (Against a kubeconfig without an
+explicit CA the kube client would read the system roots, which the image does
+not have; that use is not supported.)
+It runs as UID/GID 65532 and works with a read-only root filesystem. There is
+no base image to pin or to update, and Renovate has nothing to track in the
+Containerfile. Releases 0.1.0 and 0.1.1 were built on distroless
+`static-debian12:nonroot`; that base was frozen when distroless stopped
+building the `debian12` images (August 2026). Binaries are cross-compiled with
 [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild), so no Docker
 is needed to build them and the same command works on macOS and Linux.
 
@@ -255,6 +264,10 @@ podman build --platform linux/amd64 \
   -f build/Containerfile -t secretspec-operator:dev .
 podman run --rm --read-only --user 65532:65532 secretspec-operator:dev --help
 ```
+
+The image has no shell, so `podman run … sh` and `podman exec` do not work; to
+look inside, export the filesystem (`podman create --name x secretspec-operator:dev
+&& podman export x | tar -tv; podman rm x`).
 
 `.dockerignore` and `.containerignore` are identical (Docker and Podman read
 different names); they send only `target/dist/` to the build, which is why the

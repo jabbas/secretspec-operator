@@ -569,7 +569,7 @@ Everything in this section is **[architect]** unless tagged otherwise.
 |---|---|
 | Reference | `ghcr.io/jabbas/secretspec-operator:X.Y.Z` (or `:X.Y.Z-rc.N` for a release candidate) |
 | Platforms | `linux/amd64`, `linux/arm64` |
-| Contents | Static musl binary on distroless static `nonroot` (or `scratch`) |
+| Contents | Static musl binary on `scratch` **[owner]**; see [ADR 0003](../adr/0003-scratch-base-image.md). Legacy: the 0.1.0 and 0.1.1 images use the distroless `static-debian12:nonroot` base. |
 | Metadata | OCI labels |
 | Tags | Version tags only: `X.Y.Z` and `X.Y.Z-rc.N`, exactly the semantic version, without a `v` prefix. No `latest`, including for release candidates. |
 
@@ -781,5 +781,5 @@ Logs are structured JSON. They include namespace, name and reason. They MUST NEV
 - Resource defaults.
 - The release-notes tool.
 - The release workflow file name. It fills `<release workflow>` in the signing identity (§10.4), and the docs then show it verbatim.
-- The image base (distroless vs `scratch`).
+- The image base (distroless vs `scratch`). Decided: `scratch`, by [ADR 0003](../adr/0003-scratch-base-image.md).
 - The order of work after the API freeze milestone. The milestone itself, and the owner's sign-off before any controller, chart or release-pipeline work, are NOT left to the builder (§4.5).

@@ -23,7 +23,10 @@ Release tags follow [semver](https://semver.org) exactly, without a `v` prefix:
 the git tag, the chart version, the chart `appVersion` and the image tag are the
 same string (`0.1.1`, `0.1.1-rc.1`, …). The container image is
 `ghcr.io/jabbas/secretspec-operator:<tag>`, built for `linux/amd64` and
-`linux/arm64`. There is no `latest` tag, and the chart refuses
+`linux/arm64`. From `0.1.2` it is built `FROM scratch` (the static binary and
+`/licenses/`, no shell; use `kubectl debug` for an ephemeral debug container,
+see [Operations](operations.md#debugging-inside-the-pod)); `0.1.0` and `0.1.1`
+use a distroless `static-debian12` base. There is no `latest` tag, and the chart refuses
 `image.tag=latest`. The chart's default image tag is `<appVersion>`, so a chart
 always installs the image of the same release.
 
