@@ -197,8 +197,10 @@ Every release (`X.Y.Z` and `X.Y.Z-rc.N`, plain semver tags without a `v`
 prefix) is built by the GitHub Actions workflow `.github/workflows/release.yml`,
 which:
 
-- runs the full test and audit gate on the tagged commit, which must be on `main`
-  and match the workspace version;
+- requires that the tagged commit is on `main`, matches the workspace version
+  and has passed the full CI gate (tests, lints, `cargo deny`, `cargo audit`) as
+  a push to `main`; the workflow does not run the test suite again, and it
+  checks the RUSTSEC advisories again at release time;
 - builds the static binaries and the multi-arch image (`linux/amd64`,
   `linux/arm64`) and packages the chart;
 - scans the pushed image with [grype](https://github.com/anchore/grype) and
@@ -233,9 +235,10 @@ a `-sys` crate). syft and grype read it, so for each platform image:
   against its vulnerability database at the time of the release. It does not
   check the
   chart, the Kubernetes version or your cluster, and it cannot see anything the
-  database does not know yet. The release also runs `cargo audit` and
-  `cargo deny` on `Cargo.lock` (RUSTSEC advisories, licences, sources); the
-  one accepted advisory is explained above.
+  database does not know yet. The release re-checks the RUSTSEC advisories of
+  `Cargo.lock` with `cargo audit` and `cargo deny check advisories`; licences
+  and sources are checked by `cargo deny` in CI for the same commit. The
+  accepted advisories are explained above.
 
 **Licence texts.** The image ships `/licenses/`: this project's `LICENSE` and
 `NOTICE`, `THIRD-PARTY-LICENSES.txt` (every third-party crate of the operator's

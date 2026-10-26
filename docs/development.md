@@ -251,7 +251,8 @@ only in their repository); the command prints the list on every run, so a new
 one is visible in the CI log. `cargo deny list` is not used: its output formats
 list licence identifiers per crate but contain no licence texts. CI runs the
 command in the `licenses` job and before the e2e image build; the release
-workflow runs it in `build`, so the bundle is part of the `dist` artifact.
+workflow runs it once, in its `licenses` job, and the `image` job downloads the
+bundle as the `dist-licenses` artifact.
 
 Build and smoke-test the image with Podman (Docker: replace `podman` by
 `docker`); `TARGETARCH` selects the binary, and the non-host platform runs
@@ -356,9 +357,20 @@ chart installs the image `…:0.1.2-rc.1`.
 
 ### Tag
 
-Tag a commit that is on `main` and has passed CI. Tags are annotated, and a
-pushed tag is **never moved or deleted**: a signed artifact for it may already
-exist.
+Tag a commit that is on `main` and has passed CI. The order is: **merge to
+`main`, wait for the CI run of that push to go green, then tag.** The release
+workflow does not run the test suite again: its `verify` job requires a
+successful `ci.yml` run for the tagged commit that was started by a push to
+`main` (runs of pull requests do not count, they test a merge ref). If that run
+is still in progress, `verify` waits for it for up to 30 minutes; if the commit
+has no successful run, or only failed ones, the job fails with "has no
+successful CI run from a push to main". Fix CI (or merge the commit and wait for
+CI), then tag a commit that passed; a `verify` that failed only because CI was
+still red or missing can be re-run once CI is green, if the tag is still the
+right one (see below).
+
+Tags are annotated, and a pushed tag is **never moved or deleted**: a signed
+artifact for it may already exist.
 
 ```sh
 git switch main && git pull --ff-only
@@ -397,7 +409,7 @@ database download) and the failed job is one of:
 
 | Failed job | Re-run is safe because |
 |---|---|
-| `verify`, `build` | Nothing has been published yet. |
+| `verify`, `build`, `licenses` | Nothing has been published yet. |
 | `image`, before its "Tag the image" step (scan, SBOM, sign, attest) | The tag does not exist yet. A new image is built and pushed untagged; the digest of the failed attempt stays in the registry as an untagged (possibly signed) leftover that no tag refers to. |
 | `image`, at or after "Tag the image" | The tag exists and is reused; the image is scanned, signed and verified again (extra signatures on the same digest are harmless). |
 | `smoke`, `chart` | The image is fixed. `chart` reuses a chart version that was already pushed. |
@@ -420,13 +432,24 @@ Cut the next candidate (`-rc.2`) or patch version instead, and do not re-tag, wh
 
 | Job | Does |
 |---|---|
-| `verify` | Checks the tag format, that its version matches the workspace version (and the chart files), and that the commit is reachable from `main`; then runs the full gate: `fmt`, `clippy -D warnings`, tests including the ignored RSA tests in release mode, `crdgen --check`, `chart-test`, `cargo deny`, `cargo audit`. |
-| `build` | Static musl binaries for amd64 and arm64 (`cargo xtask dist`: cargo-zigbuild through cargo-auditable, so the binary carries its crate list), uploaded as an artifact. |
-| `image` | Builds the multi-arch image and pushes it by digest (no tag), scans each platform image with grype (fails on a fixable high or critical finding), creates an SPDX SBOM per platform with syft, signs the index and the platform images with cosign, attests the SBOMs on the platform images, then creates the release tag (only if it is free or already points to that digest) and verifies it all with the documented commands. |
+| `verify` | Checks the tag format, that its version matches the workspace version (and the chart files), and that the commit is reachable from `main`; checks the advisory databases again (`cargo deny check advisories`, `cargo audit`; pinned prebuilt binaries, nothing is compiled, since CI may be days old); and requires a successful `ci.yml` run from a push to `main` for the tagged commit (`.github/scripts/ci-status.sh`; waits up to 30 minutes for one in progress; fails closed on an API error, a missing run or a failed run). It does not re-run the test suite. |
+| `build` | Two parallel legs, `build (amd64)` and `build (arm64)`: a static musl binary each (`cargo xtask dist`: cargo-zigbuild through cargo-auditable, so the binary carries its crate list), uploaded as its own artifact (`dist-amd64`, `dist-arm64`). |
+| `licenses` | Generates the third-party licence bundle (`cargo xtask licenses`, the same for both architectures) once, in parallel with `build`; uploaded as `dist-licenses`. |
+| `image` | Downloads the three artifacts into `target/dist/{amd64,arm64,licenses}/` and restores the executable bit. Builds the multi-arch image and pushes it by digest (no tag), scans each platform image with grype (fails on a fixable high or critical finding), creates an SPDX SBOM per platform with syft, signs the index and the platform images with cosign, attests the SBOMs on the platform images, then creates the release tag (only if it is free or already points to that digest) and verifies it all with the documented commands. |
 | `smoke` | Runs the pushed image with `--help` on amd64 and on arm64 (QEMU). |
 | `chart` | Packages the chart at the release version (or, if that version is already published, pulls it), checks that it renders the image `ghcr.io/jabbas/secretspec-operator:<tag>`, pushes it if new, signs it and verifies the signature. |
 | `release` | Creates the GitHub Release (pre-release for `-rc.N`) with generated notes, the chart package, the SBOMs and `SHA256SUMS`. |
 | `helm-index` | Adds the version to the HTTP Helm repository `jabbas/helm-charts` after checking the package against the signed OCI chart. See below. |
+
+The release workflow uses **no caches**: no Rust cache, no QEMU image cache and no
+buildx binary cache is restored or saved (`cache: false` on every
+`setup-rust-toolchain`, `cache-image: false` on `setup-qemu-action`,
+`cache-binary: false` on `setup-buildx-action`). Design record:
+[ADR 0004](adr/0004-release-gate-from-main-ci.md). The builds produce signed artifacts, so nothing
+restored may end up in them, and a cache saved under a tag ref can only be
+restored by that same tag, so it would only fill the repository's cache quota.
+`ci.yml` keeps its caches, but saves them only on `main` (`cache-save-if`); pull
+requests restore only.
 
 Write permissions are granted per job: only `image` and `chart` can push packages
 and obtain an OIDC token for signing, only `release` can write repository
