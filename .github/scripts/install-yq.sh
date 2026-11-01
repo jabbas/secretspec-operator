@@ -21,7 +21,7 @@ mkdir -p "$dir"
 curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" \
   "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${archive}"
 if ! echo "$YQ_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check --strict -; then
-  echo "::error::$archive does not match the pinned checksum; update YQ_SHA256 (and YQ_VERSION) together in .github/scripts/install-yq.sh, from the checksums file of the upstream release (docs/development.md, \"Pinned tools\")"
+  echo "::error::$archive does not match the pinned checksum; update YQ_SHA256 (and YQ_VERSION) together in .github/scripts/install-yq.sh, from the checksums file of the upstream release (docs/development.md, \"Pinned tools and Renovate\")"
   exit 1
 fi
 tar -xzf "$RUNNER_TEMP/$archive" -C "$dir" ./yq_linux_amd64
