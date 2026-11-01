@@ -252,10 +252,47 @@ rc_list 0.1.4
 execute 0.1.4
 expect_fail "a rebuild line without a reason fails" "has no reason"
 
-scenario rebuild-control-char
-annotated 0.1.4 1 "$COMMIT" $'0.1.4\n\nrebuild: bad \x1b[31mreason\n'
+scenario rebuild-allowed
+annotated 0.1.4 1 "$COMMIT" $'0.1.4\n\nrebuild: CVE-2026-1234 hotfix (rustls)\n'
 execute 0.1.4
-expect_fail "a reason with control characters fails" "control characters"
+expect_output "a normal reason is accepted" $'mode=build\nrebuild_reason=CVE-2026-1234 hotfix (rustls)'
+
+scenario rebuild-allowed-punctuation
+annotated 0.1.4 1 "$COMMIT" $'0.1.4\n\nrebuild: fix #12, see a/b.c:d_e +x-y\n'
+execute 0.1.4
+expect_output "every allowlisted punctuation character is accepted" $'mode=build\nrebuild_reason=fix #12, see a/b.c:d_e +x-y'
+
+# Each of these must be refused, with the message that names the allowlist.
+allowlist_message="may only contain the characters A-Z a-z 0-9 space . _ : / ( ) # , + - and at most 200 of them"
+reject_reason() { # <name> <reason>
+  scenario "rebuild-reject-$1"
+  annotated 0.1.4 1 "$COMMIT" "0.1.4"$'\n\nrebuild: '"$2"$'\n'
+  rc_list 0.1.4 "0.1.4-rc.1:commit:$COMMIT"
+  execute 0.1.4
+  expect_fail "a reason with $1 is rejected" "$allowlist_message"
+}
+reject_reason "an escaped newline (%0A)" 'oops%0A::error::x'
+reject_reason "a percent sign" '100% sure'
+reject_reason "backticks" $'run `id`'
+reject_reason "a Markdown link" 'see [x](y)'
+reject_reason "angle brackets" 'a <b> c'
+reject_reason "a dollar sign" $'cost $HOME'
+reject_reason "a quote" 'it'"'"'s "quoted"'
+reject_reason "a semicolon" 'a; b'
+reject_reason "non-ASCII letters" 'hotfix żółć'
+reject_reason "a control character" $'bad \x1b[31mreason'
+reject_reason "a backslash" 'a\nb'
+
+scenario rebuild-length-limit
+long="$(printf 'a%.0s' $(seq 1 200))"
+annotated 0.1.4 1 "$COMMIT" "0.1.4"$'\n\nrebuild: '"$long"$'\n'
+execute 0.1.4
+expect_output "a reason of 200 characters is accepted" $'mode=build\nrebuild_reason='"$long"
+
+scenario rebuild-too-long
+annotated 0.1.4 1 "$COMMIT" "0.1.4"$'\n\nrebuild: '"${long}a"$'\n'
+execute 0.1.4
+expect_fail "a reason of 201 characters is rejected" "$allowlist_message"
 
 # --- fail closed -----------------------------------------------------------
 scenario api-error-ref

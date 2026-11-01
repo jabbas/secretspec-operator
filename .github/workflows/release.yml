@@ -898,7 +898,8 @@ jobs:
           test "$images" = "$IMAGE:$TAG"
       # Promote mode: the chart is packaged again (its version and appVersion
       # are the final ones), but it must be the chart that was tested with the
-      # release candidate: same files, and Chart.yaml different only in
+      # release candidate: same entries (types, modes, symlink targets) and
+      # file contents, and Chart.yaml different only in
       # version and appVersion. The rc chart is proved to come from this
       # workflow at the rc tag before it is trusted as the reference.
       - name: Compare with the release candidate chart

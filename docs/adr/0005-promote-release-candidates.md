@@ -17,7 +17,7 @@ A final release **promotes the release candidate's image**: the same index diges
   - A release candidate tag (`X.Y.Z-rc.N`) is `mode=build`: the existing pipeline.
   - A final tag looks for release candidate tags `X.Y.Z-rc.N` that point at the tagged commit (the tag is peeled to its commit) and takes the highest `N`, numerically. Found: `mode=promote` from that candidate.
   - No such candidate: the final tag fails, unless its annotation has a line `rebuild: <reason>`. Then it is `mode=build` (the emergency path), and the reason is shown as a warning and in the release notes.
-  - The `rebuild:` line is an explicit choice, never an automatic fallback. It wins even when a release candidate exists.
+  - The `rebuild:` line is an explicit choice, never an automatic fallback. It wins even when a release candidate exists. The reason is restricted to at most 200 characters of `A-Z a-z 0-9`, space and `. _ : / ( ) # , + -`; anything else fails the job, so it can neither affect the workflow log nor inject Markdown into the release notes.
   - The tag, its annotation and the candidates are read through the GitHub API, not from the checkout (which can lose annotated-tag data). Every lookup is fail-closed: an API error or an unexpected answer fails the job and is never taken as "no candidate".
 - **`promote` job** (replaces `build`, `licenses`, `image` and `smoke` for finals). Fail-closed, in this order:
   1. resolve the digest of the candidate's tag;
@@ -31,7 +31,7 @@ A final release **promotes the release candidate's image**: the same index diges
   9. verify by tag with the final identity (and that the candidate's signature is still on the digest).
   There is no smoke test: the identical digest was smoke-tested in the candidate's run and in the home lab.
 - **Image labels.** All builds, release candidates included, set `org.opencontainers.image.version` to the base version `X.Y.Z`, so a promoted image is consistent. The binary already reports the crate version without the candidate suffix. The candidate identity is in the tag and the signatures; `revision` stays the commit SHA.
-- **Chart.** The chart is packaged again from the tagged commit with `--version X.Y.Z --app-version X.Y.Z`, then asserted to equal the candidate's chart (pulled and verified with the candidate's identity) except for the version: the same files, byte for byte, and `Chart.yaml` differing only in `version` and `appVersion` (`.github/scripts/chart-compare.sh`). It is then pushed, signed and verified as before; `helm-index` is unchanged.
+- **Chart.** The chart is packaged again from the tagged commit with `--version X.Y.Z --app-version X.Y.Z`, then asserted to equal the candidate's chart (pulled and verified with the candidate's identity) except for the version: the same entries (path, type, mode and symlink target; no special files), regular files byte for byte, and `Chart.yaml` differing only in `version` and `appVersion` (`.github/scripts/chart-compare.sh`). It is then pushed, signed and verified as before; `helm-index` is unchanged.
 - **Release.** The GitHub Release takes the SBOMs from `promote` or `image`, depending on the mode, and says "Image promoted from `<rc tag>` without rebuilding (digest `sha256:…`)" or, for an emergency rebuild, "Rebuilt without promoting a release candidate: <reason>".
 
 ## Alternatives considered

@@ -91,12 +91,70 @@ expect_fail "a Chart.yaml field that is only in the final chart fails" "Chart.ya
 scenario file-added
 printf 'extra\n' > "$final_dir/templates/extra.yaml"
 execute
-expect_fail "a file only in the final chart fails" "do not have the same files"
+expect_fail "a file only in the final chart fails" "do not have the same entries"
 
 scenario file-missing
 rm "$final_dir/values.yaml"
 execute
-expect_fail "a file only in the release candidate chart fails" "do not have the same files"
+expect_fail "a file only in the release candidate chart fails" "do not have the same entries"
+
+# --- entries that cmp cannot tell apart ------------------------------------
+scenario file-to-symlink
+rm "$final_dir/values.yaml"
+ln -s "$rc_dir/values.yaml" "$final_dir/values.yaml"
+cmp -s "$rc_dir/values.yaml" "$final_dir/values.yaml" || fail "setup: the symlink must read as the same bytes"
+execute
+expect_fail "a regular file replaced by a symlink with the same content fails" "do not have the same entries"
+
+scenario symlink-targets-differ
+for dir in "$rc_dir" "$final_dir"; do
+  cp "$dir/values.yaml" "$dir/a.yaml"
+  cp "$dir/values.yaml" "$dir/b.yaml"
+done
+ln -s a.yaml "$rc_dir/link.yaml"
+ln -s b.yaml "$final_dir/link.yaml"
+cmp -s "$rc_dir/link.yaml" "$final_dir/link.yaml" || fail "setup: both links must read as the same bytes"
+execute
+expect_fail "two different symlink targets with the same content fail" "do not have the same entries"
+
+scenario symlink-same-target
+for dir in "$rc_dir" "$final_dir"; do
+  ln -s values.yaml "$dir/link.yaml"
+done
+execute
+expect_pass "identical symlinks pass"
+
+scenario mode-changed
+chmod 755 "$final_dir/values.yaml"
+execute
+expect_fail "a mode change fails" "do not have the same entries"
+
+scenario dir-mode-changed
+chmod 700 "$final_dir/templates"
+execute
+expect_fail "a directory mode change fails" "do not have the same entries"
+chmod 755 "$final_dir/templates"
+
+scenario chart-yaml-mode-changed
+chmod 755 "$final_dir/Chart.yaml"
+execute
+expect_fail "a Chart.yaml mode change fails" "do not have the same entries"
+
+scenario special-file
+mkfifo "$final_dir/templates/pipe"
+execute
+expect_fail "a special file in the final chart fails" "is a special file"
+
+scenario special-file-both
+mkfifo "$rc_dir/templates/pipe" "$final_dir/templates/pipe"
+execute
+expect_fail "a special file in both charts fails" "is a special file"
+
+scenario chart-yaml-symlink
+mv "$final_dir/Chart.yaml" "$final_dir/Chart.real"
+ln -s Chart.real "$final_dir/Chart.yaml"
+execute
+expect_fail "a Chart.yaml that is a symlink fails" "no regular file Chart.yaml"
 
 scenario duplicate-version
 printf 'version: 9.9.9\n' >> "$final_dir/Chart.yaml"

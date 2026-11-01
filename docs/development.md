@@ -395,7 +395,11 @@ candidate, add a `rebuild: <reason>` line to the annotation of the final tag.
 The release then builds the image from scratch (as a candidate does), the
 reason appears as a warning of the run and in the release notes, and nothing
 is promoted. The line is an explicit choice: it is never added by the workflow,
-and it applies even when a candidate exists.
+and it applies even when a candidate exists. The reason is plain text, at most
+200 characters from `A-Z a-z 0-9`, space and `. _ : / ( ) # , + -`; anything
+else (backticks, brackets, `<`, `%`, quotes, non-ASCII) makes `verify` fail, so
+the reason can neither break the run log nor inject Markdown into the release
+notes.
 
 ```sh
 git tag -a 0.1.4 -m '0.1.4' -m 'rebuild: CVE-2026-XXXX hotfix'
@@ -473,7 +477,7 @@ the chosen mode succeeded.
 | `image` | Downloads the three artifacts into `target/dist/{amd64,arm64,licenses}/` and restores the executable bit. Builds the multi-arch image and pushes it by digest (no tag), scans each platform image with grype (fails on a fixable high or critical finding), creates an SPDX SBOM per platform with syft, signs the index and the platform images with cosign, attests the SBOMs on the platform images, then creates the release tag (only if it is free or already points to that digest) and verifies it all with the documented commands. |
 | `smoke` | Runs the pushed image with `--help` on amd64 and on arm64 (QEMU). |
 | `promote` | Promote mode only; builds nothing. Resolves the digest of the candidate's tag; `cosign verify` with the candidate's identity (`…@refs/tags/X.Y.Z-rc.N`); asserts exactly linux/amd64 and linux/arm64, and the labels (`revision` = the tagged commit, `version` = `X.Y.Z`); scans both platforms again with grype (a finding means: fix it, cut a new candidate); creates the SBOMs with syft and attests them, then signs the index and the platform images, all with the final identity; tags `X.Y.Z` with the candidate's digest (same guard as `image`) and verifies by tag. No smoke test: the identical digest was smoked in the candidate's run. |
-| `chart` | Packages the chart at the release version (or, if that version is already published, pulls it), checks that it renders the image `ghcr.io/jabbas/secretspec-operator:<tag>`, pushes it if new, signs it and verifies the signature. In promote mode it first pulls and verifies the candidate's chart and asserts (`.github/scripts/chart-compare.sh`) that both have the same files, byte for byte, except `Chart.yaml`, which may differ only in `version` and `appVersion`. |
+| `chart` | Packages the chart at the release version (or, if that version is already published, pulls it), checks that it renders the image `ghcr.io/jabbas/secretspec-operator:<tag>`, pushes it if new, signs it and verifies the signature. In promote mode it first pulls and verifies the candidate's chart and asserts (`.github/scripts/chart-compare.sh`) that both have the same entries (path, type, mode, symlink target; no special files) with equal regular files, except `Chart.yaml`, which may differ only in `version` and `appVersion`. |
 | `release` | Creates the GitHub Release (pre-release for `-rc.N`) with generated notes, the chart package, the SBOMs (from `promote` or `image`) and `SHA256SUMS`. The notes say "Image promoted from `<rc tag>` without rebuilding (digest …)" or, after a `rebuild:` release, give the reason. |
 | `helm-index` | Adds the version to the HTTP Helm repository `jabbas/helm-charts` after checking the package against the signed OCI chart. See below. |
 

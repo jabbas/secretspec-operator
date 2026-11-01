@@ -100,7 +100,8 @@ final_tag_message() {
 #
 # Prints the reason of the first `rebuild: <reason>` line of a tag message and
 # returns 0; prints nothing and returns 0 when there is no such line. An empty
-# or non-printable reason fails.
+# reason, a reason of more than 200 characters or one with a character outside
+# [A-Za-z0-9 ._:/()#,+-] fails.
 rebuild_reason() {
   local message="$1" line status=0 reason
   line="$(grep -m1 -E '^rebuild: .+' <<<"$message")" || status=$?
@@ -119,8 +120,12 @@ rebuild_reason() {
     echo "::error::the 'rebuild:' line of the tag message has no reason" >&2
     return 1
   fi
-  if [[ "$reason" =~ [[:cntrl:]] ]]; then
-    echo "::error::the 'rebuild:' reason contains control characters" >&2
+  # A conservative allowlist, not an escaping scheme: the reason ends up in a
+  # workflow command, a job output and the Markdown of the release notes, so
+  # anything that is special in one of them is refused. C locale: the ranges
+  # are ASCII.
+  if ((${#reason} > 200)) || ! printf '%s' "$reason" | LC_ALL=C grep -Eq '^[A-Za-z0-9 ._:/()#,+-]+$'; then
+    echo "::error::the 'rebuild:' reason may only contain the characters A-Z a-z 0-9 space . _ : / ( ) # , + - and at most 200 of them" >&2
     return 1
   fi
   printf '%s\n' "$reason"
@@ -163,7 +168,7 @@ find_release_candidate() {
 }
 
 main() {
-  local tag commit base reason rc_tag
+  local tag commit base reason escaped rc_tag
   if [[ $# -ne 2 ]]; then
     echo "usage: release-mode.sh <tag> <commit-sha>" >&2
     return 2
@@ -196,7 +201,12 @@ main() {
   final_tag_message "$tag" "$commit" || return 1
   reason="$(rebuild_reason "$OBJ_MESSAGE")" || return 1
   if [[ -n "$reason" ]]; then
-    echo "::warning::$tag is rebuilt, not promoted from a release candidate: $reason" >&2
+    # Workflow-command data escapes (the allowlist leaves nothing to escape;
+    # this keeps the message safe if the allowlist is ever widened).
+    escaped="${reason//\%/%25}"
+    escaped="${escaped//$'\r'/%0D}"
+    escaped="${escaped//$'\n'/%0A}"
+    echo "::warning::$tag is rebuilt, not promoted from a release candidate: $escaped" >&2
     echo "mode=build"
     echo "rebuild_reason=$reason"
     return 0
