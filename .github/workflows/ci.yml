@@ -95,7 +95,9 @@ jobs:
   # `verify` job (.github/scripts/ci-status.sh), its release mode
   # (release-mode.sh) and the chart comparison of the promote mode
   # (chart-compare.sh). Hermetic: no network, a local git remote and a fake
-  # `gh`.
+  # `gh`. Also checks the job graph of release.yml statically
+  # (release-graph-check.sh): a job after a mode-dependent job needs an
+  # explicit `if:`.
   release-scripts:
     runs-on: ubuntu-24.04
     steps:
@@ -113,6 +115,8 @@ jobs:
       - run: bash .github/scripts/release-mode-test.sh
       - run: bash .github/scripts/chart-compare-test.sh
       - run: bash .github/scripts/registry-lookup-test.sh
+      - run: bash .github/scripts/release-graph-check-test.sh
+      - run: bash .github/scripts/release-graph-check.sh
 
   # release.yml downloads syft, grype and crane against SHA-256 values pinned
   # in .github/scripts/install-release-tools.sh, but it runs only on tags. This

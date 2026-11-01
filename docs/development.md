@@ -462,8 +462,8 @@ Cut the next candidate (`-rc.2`) or patch version instead, and do not re-tag, wh
 ### What the workflow does
 
 `verify` picks one of two modes (ADR 0005); the jobs that do not belong to the
-mode are skipped, and `chart` and `release` check explicitly that the jobs of
-the chosen mode succeeded.
+mode are skipped, and every job after them states explicitly which jobs must
+have succeeded (see "Job graph" below).
 
 | Mode | Used for | Jobs |
 |---|---|---|
@@ -497,6 +497,32 @@ and obtain an OIDC token for signing (`promote` and `image` are mutually exclusi
 only `release` can write repository
 contents. `helm-index` has a read-only job token and writes only to
 `jabbas/helm-charts`, with its own credential.
+
+#### Job graph: an explicit `if:` after a mode-dependent job
+
+A job whose `needs` contain a skipped job is skipped too, unless its `if:` says
+otherwise; the implicit `success()` treats "skipped" like "not successful". In
+this workflow some jobs are always skipped in one of the modes, so **every job
+that has a job with an `if:` among its transitive `needs` must carry its own
+explicit `if:`** that
+
+- contains `!cancelled()` (or `always()`), replacing the implicit `success()`, and
+- compares `needs.<job>.result` for every job in its own `needs`, and every such
+  comparison is exactly `== 'success'` or `== 'skipped'`. Any other operator or
+  value (`!=`, `'failure'`, `'cancelled'`, …) is rejected: `!= 'failure'`, for
+  example, would let a cancelled dependency through. `== 'skipped'` is accepted
+  only for a job that has an `if:` itself (one that can be skipped by mode).
+
+A failed or cancelled dependency then still stops the job, and a skipped one is
+a stated decision. The check reads the text of the `if:`, it does not parse the
+expression: it guarantees that each dependency is compared in one of the two
+allowed ways, not that the comparisons are combined correctly with `&&` and
+`||`; that stays a matter for review. This is what `helm-index` lacked after the promote mode was
+introduced: it was skipped in both modes, and the HTTP Helm repository was not
+updated. `.github/scripts/release-graph-check.sh` checks the rule statically
+(with `yq`; "can be skipped" is derived from the presence of an `if:`, so a new
+job is covered too). It runs in the `release-scripts` job of `ci.yml`, with its
+tests (`release-graph-check-test.sh`), on every pull request.
 
 ### `helm-index`: the HTTP Helm repository
 
@@ -554,7 +580,8 @@ The other release scripts have hermetic tests too, run by the same CI job:
 release candidate, promote with the highest candidate, numeric order, a
 candidate on another commit, the `rebuild:` marker, a lightweight tag, API
 errors), `chart-compare-test.sh` (only the version may differ) and
-`registry-lookup-test.sh` (registry output is printed with every line
+`release-graph-check-test.sh` (the job-graph rule above, on small workflow
+files) and `registry-lookup-test.sh` (registry output is printed with every line
 prefixed, so it can never start a workflow command; values read from the
 registry or the GitHub API are printed with `printf %q` in `::error::` lines).
 
