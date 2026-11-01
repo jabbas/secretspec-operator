@@ -376,9 +376,34 @@ artifact for it may already exist.
 git switch main && git pull --ff-only
 git tag -a 0.1.2-rc.1 -m 0.1.2-rc.1      # release candidate
 git push origin 0.1.2-rc.1
-# after the candidate has been tried out:
-git tag -a 0.1.2 -m 0.1.2                # final release
+# after the candidate has been tried out, on the SAME commit:
+git tag -a 0.1.2 -m 0.1.2 '0.1.2-rc.1^{commit}'   # final release, same commit
 git push origin 0.1.2
+```
+
+**A final release needs a release candidate on the same commit.** The final tag
+does not build anything: it promotes the image of the candidate, the one you
+tried out (same digest), and signs it again with its own identity
+([ADR 0005](adr/0005-promote-release-candidates.md)). If several candidates are
+on that commit, the highest `N` is used. A final tag on a commit without a
+candidate (or only on other commits) fails in `verify` with "no release
+candidate X.Y.Z-rc.N on <sha>". Anything that changes the image, the chart or
+the workflow needs a new candidate, tested again.
+
+**Emergency release without a candidate.** For a hotfix that cannot wait for a
+candidate, add a `rebuild: <reason>` line to the annotation of the final tag.
+The release then builds the image from scratch (as a candidate does), the
+reason appears as a warning of the run and in the release notes, and nothing
+is promoted. The line is an explicit choice: it is never added by the workflow,
+and it applies even when a candidate exists. The reason is plain text, at most
+200 characters from `A-Z a-z 0-9`, space and `. _ : / ( ) # , + -`; anything
+else (backticks, brackets, `<`, `%`, quotes, non-ASCII) makes `verify` fail, so
+the reason can neither break the run log nor inject Markdown into the release
+notes.
+
+```sh
+git tag -a 0.1.4 -m '0.1.4' -m 'rebuild: CVE-2026-XXXX hotfix'
+git push origin 0.1.4
 ```
 
 Verify a published release with the commands in
@@ -410,6 +435,8 @@ database download) and the failed job is one of:
 | Failed job | Re-run is safe because |
 |---|---|
 | `verify`, `build`, `licenses` | Nothing has been published yet. |
+| `promote`, before its "Tag the image" step | The tag does not exist yet; nothing is rebuilt. The candidate's digest is checked again and signed again (extra signatures and attestations on the same digest are harmless). |
+| `promote`, at or after "Tag the image" | The tag exists and must already be the candidate's digest; the checks, signatures and verification run again. |
 | `image`, before its "Tag the image" step (scan, SBOM, sign, attest) | The tag does not exist yet. A new image is built and pushed untagged; the digest of the failed attempt stays in the registry as an untagged (possibly signed) leftover that no tag refers to. |
 | `image`, at or after "Tag the image" | The tag exists and is reused; the image is scanned, signed and verified again (extra signatures on the same digest are harmless). |
 | `smoke`, `chart` | The image is fixed. `chart` reuses a chart version that was already pushed. |
@@ -426,19 +453,32 @@ Cut the next candidate (`-rc.2`) or patch version instead, and do not re-tag, wh
   version);
 - the workflow stops with "points to …, not to …" (somebody else moved or created
   the tag);
-- a published image or chart turns out to be wrong.
+- a published image or chart turns out to be wrong;
+- `promote` fails a check of the candidate (signature, platforms, labels, the
+  fresh vulnerability scan) or the chart comparison: the candidate is not what
+  should ship. Fix it on `main` and cut a new candidate.
 
 ### What the workflow does
 
+`verify` picks one of two modes (ADR 0005); the jobs that do not belong to the
+mode are skipped, and `chart` and `release` check explicitly that the jobs of
+the chosen mode succeeded.
+
+| Mode | Used for | Jobs |
+|---|---|---|
+| `build` | every `X.Y.Z-rc.N` tag; a final tag with a `rebuild:` line | `verify` → `build` + `licenses` → `image` → `smoke` → `chart` → `release` → `helm-index` |
+| `promote` | a final tag `X.Y.Z` with a candidate `X.Y.Z-rc.N` on the same commit | `verify` → `promote` → `chart` → `release` → `helm-index` |
+
 | Job | Does |
 |---|---|
-| `verify` | Checks the tag format, that its version matches the workspace version (and the chart files), and that the commit is reachable from `main`; checks the advisory databases again (`cargo deny check advisories`, `cargo audit`; pinned prebuilt binaries, nothing is compiled, since CI may be days old); and requires a successful `ci.yml` run from a push to `main` for the tagged commit (`.github/scripts/ci-status.sh`; waits up to 30 minutes for one in progress; fails closed on an API error, a missing run or a failed run). It does not re-run the test suite. |
+| `verify` | Checks the tag format, that its version matches the workspace version (and the chart files), and that the commit is reachable from `main`; selects the mode (`.github/scripts/release-mode.sh`: reads the final tag's annotation and the candidate tags through the GitHub API, fails closed on an API error and never falls back to `build` by itself; a final tag with neither a candidate on its commit nor a `rebuild:` line fails); checks the advisory databases again (`cargo deny check advisories`, `cargo audit`; pinned prebuilt binaries, nothing is compiled, since CI may be days old); and requires a successful `ci.yml` run from a push to `main` for the tagged commit (`.github/scripts/ci-status.sh`; waits up to 30 minutes for one in progress; fails closed on an API error, a missing run or a failed run). It does not re-run the test suite. |
 | `build` | Two parallel legs, `build (amd64)` and `build (arm64)`: a static musl binary each (`cargo xtask dist`: cargo-zigbuild through cargo-auditable, so the binary carries its crate list), uploaded as its own artifact (`dist-amd64`, `dist-arm64`). |
 | `licenses` | Generates the third-party licence bundle (`cargo xtask licenses`, the same for both architectures) once, in parallel with `build`; uploaded as `dist-licenses`. |
 | `image` | Downloads the three artifacts into `target/dist/{amd64,arm64,licenses}/` and restores the executable bit. Builds the multi-arch image and pushes it by digest (no tag), scans each platform image with grype (fails on a fixable high or critical finding), creates an SPDX SBOM per platform with syft, signs the index and the platform images with cosign, attests the SBOMs on the platform images, then creates the release tag (only if it is free or already points to that digest) and verifies it all with the documented commands. |
 | `smoke` | Runs the pushed image with `--help` on amd64 and on arm64 (QEMU). |
-| `chart` | Packages the chart at the release version (or, if that version is already published, pulls it), checks that it renders the image `ghcr.io/jabbas/secretspec-operator:<tag>`, pushes it if new, signs it and verifies the signature. |
-| `release` | Creates the GitHub Release (pre-release for `-rc.N`) with generated notes, the chart package, the SBOMs and `SHA256SUMS`. |
+| `promote` | Promote mode only; builds nothing. Resolves the digest of the candidate's tag; `cosign verify` with the candidate's identity (`…@refs/tags/X.Y.Z-rc.N`); asserts exactly linux/amd64 and linux/arm64, and the labels (`revision` = the tagged commit, `version` = `X.Y.Z`); scans both platforms again with grype (a finding means: fix it, cut a new candidate); creates the SBOMs with syft and attests them, then signs the index and the platform images, all with the final identity; tags `X.Y.Z` with the candidate's digest (same guard as `image`) and verifies by tag. No smoke test: the identical digest was smoked in the candidate's run. |
+| `chart` | Packages the chart at the release version (or, if that version is already published, pulls it), checks that it renders the image `ghcr.io/jabbas/secretspec-operator:<tag>`, pushes it if new, signs it and verifies the signature. In promote mode it first pulls and verifies the candidate's chart and asserts (`.github/scripts/chart-compare.sh`) that both have the same entries (path, type, mode, symlink target; no special files) with equal regular files, except `Chart.yaml`, which may differ only in `version` and `appVersion`. |
+| `release` | Creates the GitHub Release (pre-release for `-rc.N`) with generated notes, the chart package, the SBOMs (from `promote` or `image`) and `SHA256SUMS`. The notes say "Image promoted from `<rc tag>` without rebuilding (digest …)" or, after a `rebuild:` release, give the reason. |
 | `helm-index` | Adds the version to the HTTP Helm repository `jabbas/helm-charts` after checking the package against the signed OCI chart. See below. |
 
 The release workflow uses **no caches**: no Rust cache, no QEMU image cache and no
@@ -451,8 +491,9 @@ restored by that same tag, so it would only fill the repository's cache quota.
 `ci.yml` keeps its caches, but saves them only on `main` (`cache-save-if`); pull
 requests restore only.
 
-Write permissions are granted per job: only `image` and `chart` can push packages
-and obtain an OIDC token for signing, only `release` can write repository
+Write permissions are granted per job: only `image`, `promote` and `chart` can push packages
+and obtain an OIDC token for signing (`promote` and `image` are mutually exclusive),
+only `release` can write repository
 contents. `helm-index` has a read-only job token and writes only to
 `jabbas/helm-charts`, with its own credential.
 
@@ -506,6 +547,12 @@ different digest, invalid entries, a shared index with a foreign chart, an
 invalid foreign entry, unknown fields and top-level `annotations`/`serverInfo`
 that must survive, tampered documents that must fail, a push race, bounded
 retries, token handling and the Pages check.
+
+The other release scripts have hermetic tests too, run by the same CI job:
+`bash .github/scripts/ci-status-test.sh`, `release-mode-test.sh` (a fake `gh`:
+release candidate, promote with the highest candidate, numeric order, a
+candidate on another commit, the `rebuild:` marker, a lightweight tag, API
+errors) and `chart-compare-test.sh` (only the version may differ).
 
 It is **idempotent and fail-closed**. A version that is already in the index
 with the same digest is a no-op; with a *different* digest the job fails and

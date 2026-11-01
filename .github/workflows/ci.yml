@@ -92,8 +92,10 @@ jobs:
 
   # Tests the scripts of the release workflow: the index update of its
   # `helm-index` job (.github/scripts/helm-index.sh) and the CI gate of its
-  # `verify` job (.github/scripts/ci-status.sh). Hermetic: no network, a local
-  # git remote and a fake `gh`.
+  # `verify` job (.github/scripts/ci-status.sh), its release mode
+  # (release-mode.sh) and the chart comparison of the promote mode
+  # (chart-compare.sh). Hermetic: no network, a local git remote and a fake
+  # `gh`.
   release-scripts:
     runs-on: ubuntu-24.04
     steps:
@@ -108,6 +110,8 @@ jobs:
       - run: bash .github/scripts/install-yq.sh
       - run: bash .github/scripts/helm-index-test.sh
       - run: bash .github/scripts/ci-status-test.sh
+      - run: bash .github/scripts/release-mode-test.sh
+      - run: bash .github/scripts/chart-compare-test.sh
 
   # Applies the generated CRD to a real API server and checks the fixtures
   # against its validation (CEL, schema, defaulting). Node images are those

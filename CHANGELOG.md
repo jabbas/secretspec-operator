@@ -4,6 +4,26 @@ All notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Until the API leaves
 `v1alpha1`, a breaking change is always listed under its release.
 
+## Unreleased
+
+### Changed
+
+- **A final release publishes the release candidate's image unchanged.** Until
+  now a final tag `X.Y.Z` rebuilt the image, so the digest differed from the
+  tested `X.Y.Z-rc.N` (0.1.3 is `da975fd7…`, the home-lab-tested 0.1.3-rc.2 is
+  `dd4bd53b…`). Now the release workflow promotes the candidate that is tagged
+  on the same commit: the same digest, signed and attested again with the
+  identity of the final tag, after the candidate's own signature, platforms and
+  labels are verified and the image is scanned again. The chart is packaged
+  again and checked to equal the candidate's chart except for its version. A
+  final tag without a candidate fails, unless its message has a
+  `rebuild: <reason>` line (emergency release). See
+  [ADR 0005](docs/adr/0005-promote-release-candidates.md) and
+  [Development](docs/development.md#tag).
+- **Images are labelled with the base version.** `org.opencontainers.image.version`
+  is `X.Y.Z` for release candidates too (it was `X.Y.Z-rc.N`), so a promoted
+  image is consistent.
+
 ## 0.1.3 - 2026-11-01
 
 ### Fixed

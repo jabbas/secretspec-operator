@@ -202,7 +202,9 @@ which:
   a push to `main`; the workflow does not run the test suite again, and it
   checks the RUSTSEC advisories again at release time;
 - builds the static binaries and the multi-arch image (`linux/amd64`,
-  `linux/arm64`) and packages the chart;
+  `linux/arm64`) and packages the chart. A release candidate is built; a
+  final release **promotes the image of its release candidate** instead (see
+  below);
 - scans the pushed image with [grype](https://github.com/anchore/grype) and
   fails the release on any **fixable** vulnerability of severity high or
   critical (vulnerabilities for which no fixed version exists yet are ignored,
@@ -215,7 +217,8 @@ which:
   of each platform image and attaches it to that platform image as a signed
   attestation;
 - starts the pushed image on both architectures (`--help`) before the chart and
-  the GitHub Release are published.
+  the GitHub Release are published (for a release candidate; a promoted image
+  is the digest that was started in the candidate's run).
 
 **What the SBOM and the scan cover.** The operator binary is built with
 [cargo-auditable](https://github.com/rust-secure-code/cargo-auditable), which
@@ -278,6 +281,33 @@ check is:
 > **Legacy tag:** `0.1.0` was released under the tag `v0.1.0` (image
 > `:v0.1.0`, signing identity `refs/tags/v0.1.0`). Later releases use plain
 > semver tags.
+
+**What the signature of a final release attests.** A final release `X.Y.Z` does
+not rebuild the image: it publishes the image of the release candidate
+`X.Y.Z-rc.N` that was tagged on the same commit and tried out
+([ADR 0005](adr/0005-promote-release-candidates.md)). Before it signs, the
+workflow verifies the candidate's own signature (the bytes were built by this
+workflow at the tag `X.Y.Z-rc.N`), checks the platforms and the image labels
+(the revision is the tagged commit, the version is `X.Y.Z`), scans the image
+again with the current vulnerability database, and generates the SBOMs again.
+It then signs and attests **the same digest** with the identity of the final
+tag. So a valid signature of `…@refs/tags/X.Y.Z` on a promoted image means: this
+workflow, at this tag, checked that digest and published it. The digest is
+the one built at the candidate tag.
+
+Both identities verify against a promoted image, for the final tag and for the
+candidate tag (`cosign verify` with either `…@refs/tags/X.Y.Z` or
+`…@refs/tags/X.Y.Z-rc.N`); the image has two signatures and its platform images
+have two SBOM attestations. The documented commands use the final tag. The
+chart is packaged again at the final version, and the workflow asserts that it
+equals the candidate's chart except for `version` and `appVersion`. A final
+release published with an explicit `rebuild:` line in its tag message (an
+emergency, no candidate) is built like a candidate and only has the final
+identity; its release notes say so.
+
+The image label `org.opencontainers.image.version` is the base version `X.Y.Z`,
+also on a release candidate (`revision` is the commit); releases up to 0.1.3
+label a candidate with its own tag.
 
 Set the variables for the release you are installing. For the current release,
 `0.1.3`:
