@@ -539,7 +539,9 @@ Namespace label-selector scoping is rejected for v0.1. RBAC cannot be scoped by 
 | `secretspec.jabbas.eu` | `secretspecs/finalizers` | update | Needed on clusters with the OwnerReferencesPermissionEnforcement admission plugin (e.g. OpenShift) when setting `blockOwnerDeletion`. |
 | `""` | `secrets` | get, list, watch, create, patch, update | No `delete`. |
 | `events.k8s.io` | `events` | create, patch | |
-| `coordination.k8s.io` | `leases` | get, create, update | Operator namespace only. |
+| `coordination.k8s.io` | `leases` | get, update (only `resourceNames: [<lease name>]`), create (any name) | Operator namespace only (a Role, never cluster-wide). See the note below. |
+
+**Lease RBAC [architect]:** `get` and `update` are granted only on the operator's own Lease, by `resourceNames` (the Helm fullname, which is also the Lease name). `create` carries no `resourceNames`, because RBAC cannot restrict `create` by name: the name is not known to authorization before the object exists. The operator can therefore create a Lease with any name in its namespace, but read and change only its own. The chart renders this as two rules in the Role `<fullname>-leader-election` (`charts/secretspec-operator/templates/rbac.yaml`).
 
 **Pod security:** the pod MUST comply with PSA `restricted`:
 
