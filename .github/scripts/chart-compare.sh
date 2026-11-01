@@ -13,7 +13,8 @@
 #   - both have the same manifest: the same paths, and for each path the same
 #     type (file, directory, symlink), the same mode (not for symlinks) and
 #     the same link target (symlinks only; compared as text, never followed);
-#   - there is no special file (device, FIFO, socket) in either;
+#   - there is no special file (device, FIFO, socket) in either, and no path
+#     or symlink target with a control character (tab, newline, ...);
 #   - every regular file but the top-level Chart.yaml is byte-for-byte equal;
 #   - Chart.yaml (a regular file) differs only in its `version:` and
 #     `appVersion:` lines, each of which occurs exactly once per file.
@@ -30,6 +31,49 @@
 path_mode() {
   # GNU stat first; BSD stat (macOS) does not know -c.
   stat -c '%a' -- "$1" 2> /dev/null || stat -f '%Lp' "$1"
+}
+
+# check_names <dir>
+#
+# Fails, with an ::error:: for each, on a path or a symlink target that has a
+# control character (0x01-0x1F, 0x7F: tab, newline, ...). Helm charts never
+# need one, and the manifest below is line- and tab-separated text, so such a
+# name could be split into fields or lines and hide a difference. This runs
+# before any manifest is built. The traversal is NUL-separated, so a newline
+# in a name is seen as part of the name.
+check_names() {
+  local dir="$1" list status=0 path full target
+  local LC_ALL=C # [:cntrl:] is exactly the ASCII control characters
+  list="$(mktemp)" || return 1
+  if ! (cd "$dir" && find . -mindepth 1 -print0) > "$list"; then
+    echo "::error::could not list $dir" >&2
+    rm -f "$list"
+    return 1
+  fi
+  while IFS= read -r -d '' path; do
+    if [[ "$path" == *[[:cntrl:]]* ]]; then
+      printf '::error::%s has a path with a control character: %q\n' "$dir" "$path" >&2
+      status=1
+      continue
+    fi
+    full="$dir/$path"
+    if [[ -L "$full" ]]; then
+      # -n: no newline added to the answer. The added x keeps a trailing
+      # newline of the target itself from being stripped by $(...).
+      if ! target="$(readlink -n -- "$full" && printf x)"; then
+        echo "::error::could not read the symlink $full" >&2
+        status=1
+        continue
+      fi
+      target="${target%x}"
+      if [[ "$target" == *[[:cntrl:]]* ]]; then
+        printf '::error::%s has a symlink target with a control character: %s -> %q\n' "$dir" "$path" "$target" >&2
+        status=1
+      fi
+    fi
+  done < "$list"
+  rm -f "$list"
+  return "$status"
 }
 
 # manifest <dir>
@@ -83,6 +127,13 @@ compare_charts() {
       return 1
     fi
   done
+
+  # Names first, both charts, before any manifest exists.
+  check_names "$rc" || ok=1
+  check_names "$final" || ok=1
+  if ((ok != 0)); then
+    return 1
+  fi
 
   rc_manifest="$(manifest "$rc")" || return 1
   final_manifest="$(manifest "$final")" || return 1

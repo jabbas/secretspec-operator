@@ -150,6 +150,45 @@ mkfifo "$rc_dir/templates/pipe" "$final_dir/templates/pipe"
 execute
 expect_fail "a special file in both charts fails" "is a special file"
 
+# --- control characters in names ------------------------------------------
+control_message="control character"
+
+scenario name-with-tab
+printf 'x\n' > "$final_dir/templates/a"$'\t'"b.yaml"
+execute
+expect_fail "a filename with a tab fails" "$control_message"
+
+scenario name-with-tab-hides-content
+# The name imitates the manifest fields of a file that differs between the
+# charts; without the name check the type field would be read from the name.
+hidden="templates/x"$'\t'"file"$'\t'"644"$'\t'"-"
+printf 'one\n' > "$rc_dir/$hidden"
+printf 'two\n' > "$final_dir/$hidden"
+execute
+expect_fail "a filename imitating manifest fields fails" "$control_message"
+
+scenario name-with-newline
+printf 'x\n' > "$final_dir/templates/a"$'\n'"b.yaml"
+execute
+expect_fail "a filename with a newline fails" "$control_message"
+
+scenario name-with-control-in-rc
+printf 'x\n' > "$rc_dir/templates/a"$'\001'"b.yaml"
+execute
+expect_fail "a control character in the release candidate chart fails" "$control_message"
+
+scenario symlink-target-trailing-newline
+ln -s a.yaml "$rc_dir/link.yaml"
+ln -s a.yaml$'\n' "$final_dir/link.yaml"
+execute
+expect_fail "a symlink target with a trailing newline fails" "symlink target with a $control_message"
+
+scenario symlink-target-tab
+ln -s a$'\t'b.yaml "$rc_dir/link.yaml"
+ln -s a$'\t'b.yaml "$final_dir/link.yaml"
+execute
+expect_fail "a symlink target with a tab fails" "symlink target with a $control_message"
+
 scenario chart-yaml-symlink
 mv "$final_dir/Chart.yaml" "$final_dir/Chart.real"
 ln -s Chart.real "$final_dir/Chart.yaml"
