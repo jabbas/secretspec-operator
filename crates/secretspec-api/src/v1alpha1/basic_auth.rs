@@ -45,6 +45,7 @@ pub struct BasicAuthPassword {
     /// (not written into the object).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = MIN_RANDOM_LENGTH, max = MAX_RANDOM_LENGTH))]
+    #[schemars(transform = super::bounds::no_format)]
     pub length: Option<u16>,
 
     /// The alphabet to draw from: `alphanumeric` (a-z, A-Z, 0-9), `ascii`

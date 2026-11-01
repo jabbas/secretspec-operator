@@ -16,6 +16,11 @@ All notable changes are documented here. The format follows
   every 30 s. It now recognises that cause, logs once at `debug`, writes no
   status, publishes no event and does not retry. Every other `403` (for example
   missing RBAC) is reported as `ApplyFailed` as before.
+- **The CRD schema no longer uses the non-standard `uint16` format.** schemars
+  derived `format: uint16` for the eleven `u16` properties (`length`, `bytes`
+  and the `require` counts); Kubernetes ignores it, but Helm 4 printed
+  `unrecognized format "uint16"` on every install. The `minimum`/`maximum`
+  bounds are unchanged, so validation is unchanged.
 
 ## 0.1.2 - 2026-10-26
 
