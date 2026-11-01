@@ -26,9 +26,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use k8s_openapi::ByteString;
-use k8s_openapi::api::core::v1::Secret;
+use k8s_openapi::api::core::v1::{Namespace, Secret};
 use kube::ResourceExt;
-use kube::api::{DeleteParams, Patch, PatchParams, PostParams};
+use kube::api::{Api, DeleteParams, Patch, PatchParams, PostParams};
 use secretspec_api::constants::{
     ANNOTATION_FINGERPRINTS, ANNOTATION_GENERATED_AT, ANNOTATION_KEYS, ANNOTATION_SPEC_UID,
     LABEL_MANAGED_BY, LABEL_SPEC_NAME, MANAGED_BY_VALUE,
@@ -668,7 +668,74 @@ async fn apply_failure_is_reported_and_retried() {
     .await;
 }
 
-/// 12. With leader election only the Lease holder reconciles, and a stopped
+/// 12. Deleting a namespace that holds a SecretSpec makes no noise: Kubernetes
+/// refuses the create of the Secret the operator wants to recreate while the
+/// namespace is terminating, and the operator must neither warn, retry nor
+/// report that.
+///
+/// The SecretSpec lives in namespace B so that the operator's ServiceAccount
+/// and RBAC (namespace A) stay. Whether the operator reconciles at all while
+/// the namespace is terminating is a race: the namespace controller deletes
+/// the Secret and the SecretSpec within milliseconds of each other, and on
+/// kind the SecretSpec usually goes first, so a plain namespace delete would
+/// pass vacuously. The test therefore holds the namespace in `Terminating`
+/// with an admission policy that refuses SecretSpec deletes (the namespace
+/// controller deletes the Secret and keeps retrying the SecretSpec): the
+/// Secret's deletion then deterministically reaches a reconcile of a live
+/// SecretSpec, and the test waits for the `debug` line that shows the
+/// terminating-namespace path ran before it releases the namespace.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a cluster: set SECRETSPEC_TEST_KUBECONFIG"]
+async fn terminating_namespace_is_quiet() {
+    with_env(Rbac::Cluster, |env: Arc<Env>| async move {
+        let ns = env.ns_b.clone();
+        let name = "v01-minimal-fields";
+        let mark = log_mark();
+        let operator = env.start_default();
+        env.create_fixture(&ns, "v01-minimal-fields.yaml").await;
+        env.wait_ready(&ns, name).await;
+        env.hold_secretspec_deletes(&ns, name).await;
+
+        let namespaces: Api<Namespace> = Api::all(env.admin.clone());
+        namespaces
+            .delete(&ns, &DeleteParams::default())
+            .await
+            .unwrap();
+        wait_until("the terminating-namespace path to run", || async {
+            logs_since(mark)
+                .lines()
+                .any(|line| line.contains(&ns) && line.contains("namespace is terminating"))
+                .then_some(())
+        })
+        .await;
+        // Let any further reconcile show up before the SecretSpec is
+        // released.
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        env.release_secretspec_deletes().await;
+        wait_until(&format!("namespace {ns} to be gone"), || async {
+            namespaces
+                .get_opt(&ns)
+                .await
+                .unwrap()
+                .is_none()
+                .then_some(())
+        })
+        .await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        let logs = logs_since(mark);
+        let noisy: Vec<&str> = logs
+            .lines()
+            .filter(|line| line.contains(&ns))
+            .filter(|line| line.contains(" WARN ") || line.contains(" ERROR "))
+            .collect();
+        assert!(noisy.is_empty(), "operator warned:\n{}", noisy.join("\n"));
+        operator.stop().await.unwrap();
+    })
+    .await;
+}
+
+/// 13. With leader election only the Lease holder reconciles, and a stopped
 /// leader hands over.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "needs a cluster: set SECRETSPEC_TEST_KUBECONFIG"]

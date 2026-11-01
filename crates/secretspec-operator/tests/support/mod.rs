@@ -16,6 +16,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use k8s_openapi::ByteString;
+use k8s_openapi::api::admissionregistration::v1::{
+    ValidatingAdmissionPolicy, ValidatingAdmissionPolicyBinding,
+};
 use k8s_openapi::api::coordination::v1::Lease;
 use k8s_openapi::api::core::v1::{Namespace, Secret, ServiceAccount};
 use k8s_openapi::api::events::v1::Event;
@@ -487,10 +490,14 @@ impl Env {
         }
         let namespaces: Api<Namespace> = Api::all(self.admin.clone());
         for ns in [&self.ns_a, &self.ns_b] {
-            if let Err(e) = namespaces.delete(ns, &DeleteParams::default()).await {
-                eprintln!("warning: could not delete namespace {ns}: {e}");
+            match namespaces.delete(ns, &DeleteParams::default()).await {
+                // A test may have deleted the namespace itself.
+                Err(kube::Error::Api(status)) if status.code == 404 => {}
+                Err(e) => eprintln!("warning: could not delete namespace {ns}: {e}"),
+                Ok(_) => {}
             }
         }
+        self.delete_held_policy().await;
         if self.rbac == Rbac::Cluster {
             let name = self.cluster_role_name();
             let bindings: Api<ClusterRoleBinding> = Api::all(self.admin.clone());
@@ -500,6 +507,89 @@ impl Env {
             }
             if let Err(e) = roles.delete(&name, &DeleteParams::default()).await {
                 eprintln!("warning: could not delete ClusterRole {name}: {e}");
+            }
+        }
+    }
+
+    /// Makes the API server refuse every delete of a `SecretSpec` in `ns`
+    /// (a `ValidatingAdmissionPolicy` that always denies) and waits until it
+    /// is in force, probing with the existing `SecretSpec` `existing`. Undo with [`Env::release_secretspec_deletes`]; teardown
+    /// removes it as well.
+    ///
+    /// This holds a namespace in `Terminating` with its `SecretSpec`s still
+    /// there: the namespace controller deletes the Secrets, then keeps
+    /// retrying the refused `SecretSpec` deletes.
+    pub async fn hold_secretspec_deletes(&self, ns: &str, existing: &str) {
+        let name = self.cluster_role_name();
+        let policy: ValidatingAdmissionPolicy = serde_json::from_value(serde_json::json!({
+            "metadata": { "name": name },
+            "spec": {
+                "failurePolicy": "Fail",
+                "matchConstraints": { "resourceRules": [{
+                    "apiGroups": ["secretspec.jabbas.eu"],
+                    "apiVersions": ["*"],
+                    "operations": ["DELETE"],
+                    "resources": ["secretspecs"]
+                }] },
+                "validations": [{
+                    "expression": "false",
+                    "message": "held by the integration test"
+                }]
+            }
+        }))
+        .expect("valid ValidatingAdmissionPolicy");
+        let binding: ValidatingAdmissionPolicyBinding = serde_json::from_value(serde_json::json!({
+            "metadata": { "name": name },
+            "spec": {
+                "policyName": name,
+                "validationActions": ["Deny"],
+                "matchResources": { "namespaceSelector": { "matchLabels": {
+                    "kubernetes.io/metadata.name": ns
+                } } }
+            }
+        }))
+        .expect("valid ValidatingAdmissionPolicyBinding");
+        apply(&Api::all(self.admin.clone()), &name, &policy).await;
+        apply(&Api::all(self.admin.clone()), &name, &binding).await;
+
+        // A dry-run delete of `existing` shows when deletes are refused.
+        let dry_run = DeleteParams {
+            dry_run: true,
+            ..DeleteParams::default()
+        };
+        wait_until("the delete policy to take effect", || async {
+            self.specs(ns)
+                .delete(existing, &dry_run)
+                .await
+                .is_err()
+                .then_some(())
+        })
+        .await;
+    }
+
+    /// Removes the policy of [`Env::hold_secretspec_deletes`].
+    pub async fn release_secretspec_deletes(&self) {
+        self.delete_held_policy().await;
+    }
+
+    async fn delete_held_policy(&self) {
+        let name = self.cluster_role_name();
+        let bindings: Api<ValidatingAdmissionPolicyBinding> = Api::all(self.admin.clone());
+        let policies: Api<ValidatingAdmissionPolicy> = Api::all(self.admin.clone());
+        for result in [
+            bindings
+                .delete(&name, &DeleteParams::default())
+                .await
+                .map(drop),
+            policies
+                .delete(&name, &DeleteParams::default())
+                .await
+                .map(drop),
+        ] {
+            match result {
+                Err(kube::Error::Api(status)) if status.code == 404 => {}
+                Err(e) => eprintln!("warning: could not delete the delete policy {name}: {e}"),
+                Ok(()) => {}
             }
         }
     }

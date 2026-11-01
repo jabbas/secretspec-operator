@@ -4,6 +4,31 @@ All notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Until the API leaves
 `v1alpha1`, a breaking change is always listed under its release.
 
+## Unreleased
+
+### Fixed
+
+- **No warnings or retries when a namespace containing SecretSpecs is deleted.**
+  While a namespace is terminating, Kubernetes refuses to create the Secret
+  (`403 Forbidden`, cause `NamespaceTerminating`). The operator used to log
+  about 15 `WARN` lines per namespace (apply failed, "reconcile failed;
+  retrying", event publishing failed), write an `ApplyFailed` status and retry
+  every 30 s. It now recognises that cause, logs once at `debug`, writes no
+  status, publishes no event and does not retry. Every other `403` (for example
+  missing RBAC) is reported as `ApplyFailed` as before.
+- **The CRD schema no longer uses the non-standard `uint16` format.** schemars
+  derived `format: uint16` for the eleven `u16` properties (`length`, `bytes`
+  and the `require` counts); Kubernetes ignores it, but Helm 4 printed
+  `unrecognized format "uint16"` on every install. The `minimum`/`maximum`
+  bounds are unchanged, so validation is unchanged.
+
+### Changed
+
+- **Docs:** [Operations](docs/operations.md#debugging-inside-the-pod) has a
+  non-interactive `kubectl debug` example (`-i` plus a command), with the
+  harmless `couldn't attach … falling back to streaming logs` message and the
+  advice to pin the busybox image by digest.
+
 ## 0.1.2 - 2026-10-26
 
 ### Added

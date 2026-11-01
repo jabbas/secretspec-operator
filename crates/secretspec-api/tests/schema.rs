@@ -177,6 +177,12 @@ fn schema_bounds_have_exact_values() {
         // The typed CRD stores bounds as f64, so they serialise as `1.0`.
         assert_eq!(n["minimum"].as_f64(), Some(f64::from(min)), "{path:?}");
         assert_eq!(n["maximum"].as_f64(), Some(f64::from(max)), "{path:?}");
+        assert_eq!(n["type"], "integer", "{path:?}");
+        assert!(
+            n.get("format").is_none(),
+            "{path:?}: format {}",
+            n["format"]
+        );
     }
 
     for (path, max, pattern) in [
@@ -203,6 +209,46 @@ fn schema_bounds_have_exact_values() {
     assert_eq!(user["minLength"], 1);
     assert_eq!(user["maxLength"], 253);
     assert_eq!(user["pattern"], "^[!-9;-~]+$");
+}
+
+/// The `format`s the schema may use: standard `OpenAPI` / Kubernetes ones.
+/// Anything else (schemars derives `uint16` for `u16`) makes Helm 4 warn
+/// `unrecognized format` while Kubernetes ignores it.
+const STANDARD_FORMATS: [&str; 4] = ["int32", "int64", "date-time", "byte"];
+
+fn check_formats(path: &str, node: &Value, problems: &mut Vec<String>) {
+    if let Some(format) = node.get("format")
+        && !format
+            .as_str()
+            .is_some_and(|format| STANDARD_FORMATS.contains(&format))
+    {
+        problems.push(format!("{path}: format {format}"));
+    }
+    if let Some(props) = node.get("properties").and_then(Value::as_object) {
+        for (name, child) in props {
+            check_formats(&format!("{path}.{name}"), child, problems);
+        }
+    }
+    for key in ["items", "additionalProperties"] {
+        if let Some(child) = node.get(key) {
+            check_formats(&format!("{path}.{key}"), child, problems);
+        }
+    }
+}
+
+#[test]
+fn schema_uses_only_standard_formats() {
+    let mut problems = Vec::new();
+    check_formats("", &root_schema(), &mut problems);
+    assert!(
+        problems.is_empty(),
+        "non-standard formats (add `#[schemars(transform = bounds::no_format)]`):\n{}",
+        problems.join("\n")
+    );
+    // The walk must see the formats that are allowed, or it checks nothing.
+    let status = &root_schema()["properties"]["status"]["properties"];
+    assert_eq!(status["observedGeneration"]["format"], "int64");
+    assert_eq!(status["lastGeneratedTime"]["format"], "date-time");
 }
 
 fn check_documented(path: &str, node: &Value, problems: &mut Vec<String>) {

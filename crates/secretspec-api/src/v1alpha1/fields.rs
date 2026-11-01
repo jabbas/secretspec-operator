@@ -37,6 +37,7 @@ pub struct FieldSpec {
     /// the object).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = MIN_RANDOM_LENGTH, max = MAX_RANDOM_LENGTH))]
+    #[schemars(transform = super::bounds::no_format)]
     pub length: Option<u16>,
 
     /// Characters mode: the alphabet to draw from. `alphanumeric` is a-z, A-Z
@@ -71,6 +72,7 @@ pub struct FieldSpec {
     /// `encoding`. Example: `32` with `base64url` makes a Fernet key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = MIN_RANDOM_LENGTH, max = MAX_RANDOM_LENGTH))]
+    #[schemars(transform = super::bounds::no_format)]
     pub bytes: Option<u16>,
 
     /// Random-bytes mode: how the bytes are rendered: `hex`, `base64`,
@@ -129,20 +131,24 @@ pub struct RequireSpec {
     /// Minimum lower-case letters (`a-z`), 0-1024.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 0, max = MAX_REQUIRE_COUNT))]
+    #[schemars(transform = super::bounds::no_format)]
     pub lower: Option<u16>,
 
     /// Minimum upper-case letters (`A-Z`), 0-1024.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 0, max = MAX_REQUIRE_COUNT))]
+    #[schemars(transform = super::bounds::no_format)]
     pub upper: Option<u16>,
 
     /// Minimum digits (`0-9`), 0-1024.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 0, max = MAX_REQUIRE_COUNT))]
+    #[schemars(transform = super::bounds::no_format)]
     pub digits: Option<u16>,
 
     /// Minimum ASCII punctuation characters, 0-1024.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 0, max = MAX_REQUIRE_COUNT))]
+    #[schemars(transform = super::bounds::no_format)]
     pub symbols: Option<u16>,
 }

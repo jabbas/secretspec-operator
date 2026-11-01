@@ -23,8 +23,8 @@ use serde_json::{Map, Value};
 
 use crate::metrics::Metrics;
 use crate::outcome::{
-    apply_failed_message, apply_failed_status, events_after_apply_failure, kube_error_summary,
-    requeue_after,
+    apply_failed_message, apply_failed_status, events_after_apply_failure,
+    is_namespace_terminating, kube_error_summary, requeue_after,
 };
 use crate::view::owned_view;
 
@@ -173,6 +173,15 @@ async fn reconcile_inner(
             .await;
         drop(secret);
         if let Err(err) = applied {
+            if is_namespace_terminating(&err) {
+                // The namespace (and with it this SecretSpec) is being
+                // deleted: there is nothing to retry, report or tell anyone,
+                // and a status write or event would be refused as well. The
+                // reconcile counts as a success in the metrics (it ended
+                // without an error and with no further work).
+                tracing::debug!(namespace, name, "namespace is terminating; not applying");
+                return Ok(Action::await_change());
+            }
             let message = apply_failed_message(&err);
             drop(err);
             let status = apply_failed_status(

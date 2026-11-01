@@ -139,7 +139,7 @@ pods`), that the CRD matches the chart, and — in namespace mode — that the
 | `Generated` | `True` | The Secret matches the spec. |
 | `Conflict` | `False` | A Secret with the target name exists that this `SecretSpec` may not manage, or has the wrong type. The message says which: `Secret <name> exists and is not managed by this SecretSpec` (no `managed-by`/`spec-name` labels of the operator); `… is controlled by <Kind> <name> (<apiVersion>) and not by a SecretSpec`; or `Secret <name> has type <old>; delete it to recreate it with type <new>`. **Nothing is written.** The operator never adopts an unlabelled Secret. Rename the `SecretSpec`, or delete the foreign Secret if it is yours to delete; for a type mismatch delete the Secret (all values are regenerated). |
 | `InvalidSpec` | `False` | Runtime validation failed; the message lists each problem with its field path, e.g. `spec.fields[0].exclude: alphabet must contain at least 2 characters after exclude`. Fix the `SecretSpec`. |
-| `ApplyFailed` | `False` | Writing the Secret failed. The message is `apply of Secret failed: <HTTP code> <reason>` (for example `403 Forbidden`); the server's message is deliberately not copied, because it can echo submitted data. Retried every **30 seconds**. Check RBAC, admission policies and quotas for Secrets in that namespace. |
+| `ApplyFailed` | `False` | Writing the Secret failed. The message is `apply of Secret failed: <HTTP code> <reason>` (for example `403 Forbidden`); the server's message is deliberately not copied, because it can echo submitted data. Retried every **30 seconds**. Check RBAC, admission policies and quotas for Secrets in that namespace. One `403` is **not** reported this way: while a namespace is being deleted, Kubernetes refuses to create the Secret (cause `NamespaceTerminating`). The operator then logs once at `debug`, writes no status, publishes no event and does not retry (the `SecretSpec` is deleted with its namespace); the reconcile counts as a success in the metrics. |
 | `GenerationFailed` | `False` | Generating a value failed inside the operator (SSH key library, bcrypt) — not a problem of your spec. Message: `value generation failed: <cause>`. Retried after **30 seconds**. If it persists, report a bug. |
 | `WaitingForGarbageCollection` | `False` | The Secret still has an owner reference to a *deleted* `SecretSpec` of the same name (you deleted and re-created it quickly under `Delete`). The operator waits and re-checks every 5 seconds instead of adopting the Secret. It resolves when Kubernetes garbage collection finishes; if it lasts minutes, the garbage collector is stuck (check the controller manager). No Event is emitted for this reason. |
 
@@ -215,6 +215,26 @@ that brings its own tools and shares the operator's process namespace:
 kubectl -n secretspec-system debug -it <operator-pod> --image=busybox:stable \
   --target=operator --profile=restricted
 ```
+
+For a one-shot look from a script or CI job, run a single command instead of a
+shell: `-i` (no `-t`) plus the command after `--`. The debug container starts,
+runs it and prints its output:
+
+```sh
+kubectl -n secretspec-system debug -i <operator-pod> \
+  --image=busybox:stable@sha256:<digest> \
+  --target=operator --profile=restricted -- ls /proc/1/root/licenses/
+```
+
+`kubectl` may print a message like `couldn't attach … falling back to
+streaming logs` first. It is harmless: `kubectl` could not attach to the
+short-lived container and shows its log instead, so the output still arrives.
+Pin the busybox image **by digest** (look it up
+with, for example, `crane digest busybox:stable`) so that the debug tooling
+cannot change under you; the tag in the interactive example is only a
+convenience. The command runs as user `65532`, the operator's own user, like
+the interactive shell. An ephemeral container cannot be removed; it stays in
+the pod until the pod is replaced.
 
 `--profile=restricted` is needed when the namespace enforces the Pod Security
 Standard `restricted` (the default `general` profile adds `SYS_PTRACE`, which

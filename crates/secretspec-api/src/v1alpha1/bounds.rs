@@ -57,6 +57,17 @@ pub(crate) fn plain_enum(schema: &mut Schema) {
     }
 }
 
+/// Removes the `format` schemars derives from a Rust integer type (`uint16`
+/// for `u16`).
+///
+/// `uint16` is not an `OpenAPI` format: Kubernetes ignores it, but Helm 4 warns
+/// `unrecognized format "uint16"` when it loads the CRD. The range of such a
+/// field is stated by `minimum`/`maximum` (the `range` attribute), which stay.
+/// Use on every `u16`/`u32`/… property.
+pub(crate) fn no_format(schema: &mut Schema) {
+    schema.remove("format");
+}
+
 /// Removes a `default` that schemars derived from `#[serde(default)]`.
 ///
 /// Used where deserialisation needs a default but the stored object should not
