@@ -553,7 +553,10 @@ The other release scripts have hermetic tests too, run by the same CI job:
 `bash .github/scripts/ci-status-test.sh`, `release-mode-test.sh` (a fake `gh`:
 release candidate, promote with the highest candidate, numeric order, a
 candidate on another commit, the `rebuild:` marker, a lightweight tag, API
-errors) and `chart-compare-test.sh` (only the version may differ).
+errors), `chart-compare-test.sh` (only the version may differ) and
+`registry-lookup-test.sh` (registry output is printed with every line
+prefixed, so it can never start a workflow command; values read from the
+registry or the GitHub API are printed with `printf %q` in `::error::` lines).
 
 It is **idempotent and fail-closed**. A version that is already in the index
 with the same digest is a no-op; with a *different* digest the job fails and

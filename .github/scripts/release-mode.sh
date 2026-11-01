@@ -41,7 +41,9 @@ resolve_object() {
   local type="$1" sha="$2" body
   OBJ_COMMIT="" OBJ_MESSAGE=""
   if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
-    echo "::error::'$sha' is not a full object SHA" >&2
+    # %q here and below: the values come from the GitHub API, and a newline in
+    # one of them must not end the workflow command and start another.
+    printf '::error::%q is not a full object SHA\n' "$sha" >&2
     return 1
   fi
   case "$type" in
@@ -60,13 +62,13 @@ resolve_object() {
       fi
       OBJ_COMMIT="$(jq -r '.object.sha' <<<"$body")"
       if [[ ! "$OBJ_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
-        echo "::error::the tag object $sha points at '$OBJ_COMMIT', not a commit SHA" >&2
+        printf '::error::the tag object %s points at %q, not a commit SHA\n' "$sha" "$OBJ_COMMIT" >&2
         return 1
       fi
       OBJ_MESSAGE="$(jq -r '.message' <<<"$body")"
       ;;
     *)
-      echo "::error::the tag points at a '$type' object, not at a commit; refusing to choose a release mode" >&2
+      printf '::error::the tag points at a %q object, not at a commit; refusing to choose a release mode\n' "$type" >&2
       return 1
       ;;
   esac

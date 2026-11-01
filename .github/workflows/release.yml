@@ -699,7 +699,7 @@ jobs:
             config="$(crane config "$IMAGE@$digest")"
             revision="$(jq -r '.config.Labels["org.opencontainers.image.revision"] // ""' <<<"$config")"
             version="$(jq -r '.config.Labels["org.opencontainers.image.version"] // ""' <<<"$config")"
-            echo "$arch: revision=$revision version=$version"
+            printf '%s: revision=%q version=%q\n' "$arch" "$revision" "$version"
             if [[ "$revision" != "$GITHUB_SHA" ]]; then
               # %q: the labels are read from the registry.
               printf '::error::%s image label revision is %q, not the tagged commit %s\n' "$arch" "$revision" "$GITHUB_SHA"
@@ -886,7 +886,7 @@ jobs:
           chart_resolve "$CHART_REPO/secretspec-operator" "$VERSION" existing pull.log
           echo "chart lookup: $CHART_STATE"
           if [[ "$CHART_STATE" == found ]]; then
-            cat pull.log
+            show_log pull.log
             digest="$(awk '/^Digest:/ {print $2}' pull.log)"
             [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
             echo "::notice::chart $VERSION already exists ($digest); resuming with it, nothing is pushed"
@@ -896,7 +896,7 @@ jobs:
             # helm's stderr only (no credentials, no secret data): shows how
             # the registry really answered for a package that is not there.
             echo "--- pull.log ---"
-            cat pull.log
+            show_log pull.log
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
       # The committed Chart.yaml keeps the workspace version; the release
@@ -933,13 +933,14 @@ jobs:
       - name: Compare with the release candidate chart
         if: needs.verify.outputs.mode == 'promote'
         run: |
+          source .github/scripts/registry-lookup.sh # show_log
           mkdir rc-pull rc-extract final-extract
           helm pull "$CHART_REPO/secretspec-operator" --version "$RC_TAG" --destination rc-pull > rc-pull.log 2>&1 || {
-            cat rc-pull.log
+            show_log rc-pull.log
             printf '::error::could not pull the release candidate chart %q\n' "$RC_TAG"
             exit 1
           }
-          cat rc-pull.log
+          show_log rc-pull.log
           rc_digest="$(awk '/^Digest:/ {print $2}' rc-pull.log)"
           [[ "$rc_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           identity="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${RC_TAG}"
@@ -967,7 +968,7 @@ jobs:
             exit 1
           fi
           echo "--- recheck.log ---"
-          cat recheck.log
+          show_log recheck.log
           helm push "chart/secretspec-operator-${VERSION}.tgz" "$CHART_REPO" 2>&1 | tee push.log
           digest="$(awk '/^Digest:/ {print $2}' push.log)"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
