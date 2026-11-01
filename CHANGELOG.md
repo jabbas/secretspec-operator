@@ -23,6 +23,7 @@ All notable changes are documented here. The format follows
 - **Images are labelled with the base version.** `org.opencontainers.image.version`
   is `X.Y.Z` for release candidates too (it was `X.Y.Z-rc.N`), so a promoted
   image is consistent.
+- Release tooling pins are tracked by Renovate; documentation fixes.
 
 ## 0.1.3 - 2026-11-01
 
