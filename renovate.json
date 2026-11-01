@@ -87,6 +87,11 @@
       "enabled": false
     },
     {
+      "description": "Runner image (`runs-on: ubuntu-24.04`): changing it is a deliberate decision, never a Renovate pull request",
+      "matchDatasources": ["github-runners"],
+      "enabled": false
+    },
+    {
       "description": "Cargo: group minor and patch updates; majors come as separate PRs",
       "matchManagers": ["cargo"],
       "matchUpdateTypes": ["minor", "patch"],
