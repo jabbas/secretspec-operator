@@ -514,7 +514,7 @@ too; Helm and Flux hide pre-releases unless asked. In order, it:
    working) and asserts, with `::error::` on any mismatch, that it answers
    HTTP 200 after redirects and that its SHA-256 equals (a) the chart-layer
    digest of the pushed, signed OCI chart (read by the digest the `chart` job
-   verified, with `crane` pinned in `release.yml`) and (b) the `SHA256SUMS`
+   verified, with `crane` pinned in `install-release-tools.sh`) and (b) the `SHA256SUMS`
    entry of the release;
 3. only then checks out `jabbas/helm-charts` with the token (not stored in the
    checkout) and builds the new index
@@ -536,8 +536,8 @@ too; Helm and Flux hide pre-releases unless asked. In order, it:
    build of `jabbas/helm-charts`. If Pages serves a **different** digest for
    the version, the job fails.
 
-The tools are pinned: `crane` in the `env:` block of `release.yml`, `yq` in
-`.github/scripts/install-yq.sh` (both checksum verified). `jq` is the one of the
+The tools are pinned: `crane` in `.github/scripts/install-release-tools.sh`,
+`yq` in `.github/scripts/install-yq.sh` (both checksum verified). `jq` is the one of the
 runner image (it only reads the OCI manifest here).
 
 The index logic is tested without network by
@@ -672,6 +672,9 @@ version.
   answer looks exactly the same.
 - **cosign.** Releases are signed with cosign v2 (`COSIGN_VERSION` in
   `release.yml`) in the legacy format, which cosign v2 and v3 both verify.
+  cosign v3 changes the signature format, so moving to it is a deliberate
+  decision (documented here and in `docs/security.md`), not a Renovate pull
+  request.
 
 ### Pinned tools and Renovate
 
@@ -684,10 +687,10 @@ comment), it tracks:
 | Pin | Where | Renovate PR | A human still |
 |---|---|---|---|
 | cosign (`COSIGN_VERSION`) | `env:` of `release.yml` | "release tooling" | nothing: `sigstore/cosign-installer` verifies the download itself |
-| syft, grype, crane (`*_VERSION`, `*_SHA256`) | `env:` of `release.yml` | "release tooling" (version only; `release-pins` fails until the checksum is updated) | **updates `SYFT_SHA256` / `GRYPE_SHA256` / `CRANE_SHA256`** |
+| syft, grype, crane (`*_VERSION`, `*_SHA256`) | `.github/scripts/install-release-tools.sh` | "release tooling" (version only; `release-pins` fails until the checksum is updated) | **updates `SYFT_SHA256` / `GRYPE_SHA256` / `CRANE_SHA256`** |
 | yq (`YQ_VERSION`, `YQ_SHA256`) | `.github/scripts/install-yq.sh` | "release tooling" (version only) | **updates `YQ_SHA256`** |
 | cargo-zigbuild, cargo-auditable | `tool:` of `taiki-e/install-action` in `ci.yml` (`e2e`) and `release.yml` (`build`); `cargo install` line below | "release tooling" | nothing |
-| ziglang | `.github/requirements/ziglang.txt` (hash-pinned; pip manager), `pip install` line below | "release tooling" | checks that the hash is the linux x86_64 wheel's |
+| ziglang | `.github/requirements/ziglang.txt` (hash-pinned; pip manager), `pip install` line below | "release tooling" | nothing: Renovate rewrites the hashes (all files of the release, as PyPI lists them) |
 | BuildKit image | `driver-opts` of `docker/setup-buildx-action` (version comment and index digest) in both workflows | "release tooling" | nothing |
 | helm | `version:` of `azure/setup-helm` in both workflows | "ci tooling" | nothing |
 | cargo-deny, cargo-audit | `tool:` of `taiki-e/install-action` in `ci.yml` (`deny`, `audit`) and `release.yml` (`verify`) | "ci tooling" | nothing |
@@ -723,13 +726,17 @@ would then only prove that the download matches what the same host says). A
 version bump without its checksum stops at `sha256sum --check` with an
 `::error::` that names the variable (`SYFT_SHA256`, …). This happens in the
 pull request, not at the next `-rc` tag: yq runs in the `release-scripts` job,
-and the CI job `release-pins` reads the `SYFT`/`GRYPE`/`CRANE` `_VERSION` and
-`_SHA256` entries from the `env:` block of `release.yml` (the one source of
-truth; `yq` reads them) and runs the install steps of `release.yml` itself,
-unchanged and found by job and step name. It then runs the tools with
-`--version` only. If a step is renamed or a new pinned checksum is added to
-`release.yml`, `release-pins` fails until it is updated. Take the checksum of
-the `linux_amd64` archive from the upstream release:
+and syft, grype and crane are installed by one script,
+`.github/scripts/install-release-tools.sh`, which holds their versions and
+checksums, is called by the `image`, `promote` and `helm-index` jobs of
+`release.yml`, and is run for `all` its tools by the CI job `release-pins`
+(which then runs the tools with `--version` only). The script only downloads,
+verifies and unpacks. A tool added to it is covered by `release-pins` without
+touching that job. cosign stays on the `sigstore/cosign-installer` action
+(`COSIGN_VERSION` in `release.yml`), which verifies its download itself, and
+Renovate does not propose cosign majors (v3 changes the signature format, see
+above). Take the checksum of the `linux_amd64` archive from the upstream
+release:
 
 - syft, grype: `*_checksums.txt` (archive `<tool>_<version>_linux_amd64.tar.gz`);
 - crane: `checksums.txt` of go-containerregistry (archive

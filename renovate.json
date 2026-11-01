@@ -20,14 +20,14 @@
   },
   "customManagers": [
     {
-      "description": "Release tool versions, pinned next to a `# renovate: datasource=… depName=…` comment (GitHub release binaries: cosign, syft, grype, crane, yq). `extractVersion` strips the `v` of tags whose pin has none. The pinned SHA-256 checksums are NOT updated, see the packageRules. (helm and kind are pinned in `with: version:` of setup-helm / kind-action, which the github-actions manager reads itself.)",
+      "description": "Release tool versions, pinned next to a `# renovate: datasource=… depName=…` comment (GitHub release binaries: cosign in release.yml, syft, grype, crane in install-release-tools.sh, yq in install-yq.sh). `extractVersion` strips the `v` of tags whose pin has none. The pinned SHA-256 checksums are NOT updated, see the packageRules. (helm and kind are pinned in `with: version:` of setup-helm / kind-action, which the github-actions manager reads itself.)",
       "customType": "regex",
       "managerFilePatterns": [
         "/^\\.github/workflows/[^/]+\\.yml$/",
         "/^\\.github/scripts/[^/]+\\.sh$/"
       ],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\n\\s*(?:version|[A-Z][A-Z0-9_]*_VERSION)[:=] ?(?<currentValue>[^\\s#]+)"
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\n\\s*[A-Z][A-Z0-9_]*_VERSION[:=] ?(?<currentValue>[^\\s#]+)"
       ]
     },
     {
@@ -122,9 +122,9 @@
       "semanticCommitScope": "deps"
     },
     {
-      "description": "cosign-installer's `cosign-release: ${{ env.COSIGN_VERSION }}` is a variable, not a version: the pin is COSIGN_VERSION, tracked by the regex manager",
-      "matchManagers": ["github-actions"],
+      "description": "No cosign major by Renovate: v3 changes the signature format, and docs/security.md and docs/development.md document the releases as signed with cosign v2 in the legacy format; moving to v3 is a deliberate decision",
       "matchDepNames": ["sigstore/cosign"],
+      "matchUpdateTypes": ["major"],
       "enabled": false
     },
     {
@@ -165,7 +165,12 @@
       ]
     },
     {
-      "description": "A new Kubernetes minor is a decision about the test matrix (ci.yml, docs/development.md), made by hand; Renovate only moves the patch of a pinned minor",
+      "description": "A new Kubernetes minor is a decision about the test matrix (ci.yml, docs/development.md), made by hand; Renovate only moves the patch of a pinned minor. separateMultipleMinor gives every minor its own bucket: without it Renovate picks the highest release (a newer minor), the rule below disables that, and the patch of the pinned minor is never proposed. (Not separateMinorPatch: it would make every patch its own PR.)",
+      "matchDepNames": ["kindest/node"],
+      "separateMultipleMinor": true
+    },
+    {
+      "description": "See the rule above: the newer-minor bucket of kindest/node stays disabled, the patch bucket of the pinned minor stays in the kind group",
       "matchDepNames": ["kindest/node"],
       "matchUpdateTypes": ["major", "minor"],
       "enabled": false
@@ -179,14 +184,7 @@
         "mikefarah/yq"
       ],
       "prBodyNotes": [
-        "**Update the matching SHA-256 in this PR before merging**: `SYFT_SHA256` / `GRYPE_SHA256` / `CRANE_SHA256` in `.github/workflows/release.yml`, `YQ_SHA256` in `.github/scripts/install-yq.sh`. Take it from the checksums file of the new upstream release (the `linux_amd64` / `Linux_x86_64` archive; see docs/development.md, \"Pinned tools\"). A version bump without it fails closed (`sha256sum --check`): the `release-pins` and `release-scripts` CI jobs of this PR fail with the variable named."
-      ]
-    },
-    {
-      "description": "ziglang: the pinned hash is the linux x86_64 wheel",
-      "matchDepNames": ["ziglang"],
-      "prBodyNotes": [
-        "`.github/requirements/ziglang.txt` pins the hash of the linux x86_64 wheel (`pip install --require-hashes`). Check that the hash in this PR belongs to the new version's `manylinux`/`musllinux` x86_64 wheel; a wrong hash fails the `e2e` job."
+        "**Update the matching SHA-256 in this PR before merging**: `SYFT_SHA256` / `GRYPE_SHA256` / `CRANE_SHA256` in `.github/scripts/install-release-tools.sh`, `YQ_SHA256` in `.github/scripts/install-yq.sh`. Take it from the checksums file of the new upstream release (the `linux_amd64` / `Linux_x86_64` archive; see docs/development.md, \"Pinned tools and Renovate\"). A version bump without it fails closed (`sha256sum --check`): the `release-pins` and `release-scripts` CI jobs of this PR fail with the variable named."
       ]
     },
     {
