@@ -64,7 +64,12 @@ jobs:
   # re-checks the advisory databases, which move independently of the code.
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45 # up to 30 min of waiting for a CI run still in progress
+    # ci-status.sh waits at most 30 min of wall-clock time (retries and API
+    # latency included), plus at most one more poll (about a minute). The
+    # 15 min of margin cover the setup, cargo deny and cargo audit that run
+    # before it; keep this well above 30 min + that setup, so the script
+    # reports its own timeout instead of the job being cancelled.
+    timeout-minutes: 45
     permissions:
       contents: read
       actions: read # list the runs of ci.yml

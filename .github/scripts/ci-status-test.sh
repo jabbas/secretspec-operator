@@ -80,13 +80,15 @@ answer_error() {
   : > "$case_dir/answer.$answers.error"
 }
 
-# execute [timeout-seconds [sha [interval-seconds]]]: runs ci-status.sh.
+# execute [timeout-seconds [sha [interval-seconds [retry-wait-seconds]]]]: runs
+# ci-status.sh. The time budget is wall-clock time, so these cases really wait:
+# keep the numbers at a few seconds.
 execute() {
   rc=0
   out="$(
     PATH="$work/bin:$PATH" FAKE_GH_DIR="$case_dir" GITHUB_REPOSITORY=example/repo \
       GH_TOKEN=unused CI_STATUS_INTERVAL="${3:-1}" CI_STATUS_TIMEOUT="${1:-5}" \
-      CI_STATUS_ATTEMPTS=3 CI_STATUS_RETRY_WAIT=0 \
+      CI_STATUS_ATTEMPTS=3 CI_STATUS_RETRY_WAIT="${4:-0}" \
       bash "$script" "${2:-$SHA}" 2>&1
   )" || rc=$?
 }
@@ -263,11 +265,29 @@ answer "$(run push main "$SHA" in_progress null)"
 execute 2
 expect_fail "still in_progress at the timeout fails" "still running after 2s"
 
+scenario retries-use-the-budget
+# One poll, then a poll whose first attempt fails: the second takes the
+# interval (1 s) plus the retry wait (1 s) = the whole 2 s budget. The script
+# must stop with its own message after that poll. Counting only the sleeps
+# between polls (1 s) it would poll a third time.
+answer "$(run push main "$SHA" in_progress null)"
+answer_error
+answer "$(run push main "$SHA" in_progress null)"
+execute 2 "$SHA" 1 1
+expect_fail "retry waits count against the time budget" "still running after 2s"
+expect_calls 3 "no poll after the budget was used up by a retry"
+
 scenario zero-interval
 answer "$(run push main "$SHA" in_progress null)"
-execute 3 "$SHA" 0
-expect_fail "a zero interval still times out" "still running after 3s"
-expect_calls 4 "a zero interval counts one second per poll"
+execute 2 "$SHA" 0
+expect_fail "a zero interval still times out" "still running after 2s"
+# A zero interval waits a second per poll instead of spinning on the API.
+polls="$(cat "$case_dir/count" 2> /dev/null || echo 0)"
+if ((polls >= 2 && polls <= 4)); then
+  pass "a zero interval polls once a second (made $polls API calls)"
+else
+  fail "a zero interval made $polls API calls in 2 s (expected 2 to 4)"
+fi
 
 # --- arguments ----------------------------------------------------------------------------
 scenario bad-sha

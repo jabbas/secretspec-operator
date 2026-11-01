@@ -27,6 +27,12 @@
 #   GH_TOKEN             token for gh (the job's GITHUB_TOKEN, `actions: read`)
 #   CI_STATUS_INTERVAL   seconds between polls              (default 30)
 #   CI_STATUS_TIMEOUT    seconds to wait for a running CI   (default 1800)
+#                        wall-clock budget: API retries and their waits count.
+#                        It is checked after each poll, so the script ends at
+#                        most one poll (interval + retries) after it. The
+#                        calling job's `timeout-minutes` must stay well above
+#                        it (release.yml: 45 min for 30 min), or GitHub
+#                        cancels the job before the script can say why.
 #   CI_STATUS_ATTEMPTS   API attempts per poll              (default 3)
 #   CI_STATUS_RETRY_WAIT seconds between those attempts     (default 10)
 #
@@ -79,7 +85,9 @@ ci_runs() {
 # Returns 0 when CI succeeded for <sha>, 1 otherwise (after printing why).
 ci_wait() {
   local sha="$1" interval="${CI_STATUS_INTERVAL:-30}" timeout="${CI_STATUS_TIMEOUT:-1800}"
-  local waited=0 runs status conclusion success pending others
+  # The budget is wall-clock time since here ($SECONDS), so API retries, their
+  # waits and API latency count, not only the sleeps between polls.
+  local start=$SECONDS waited runs status conclusion success pending others
 
   if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
     echo "::error::'$sha' is not a full commit SHA" >&2
@@ -118,17 +126,14 @@ ci_wait() {
       fi
       return 1
     fi
+    waited=$((SECONDS - start))
     if ((waited >= timeout)); then
       echo "::error::CI for commit $sha is still running after ${timeout}s; wait for it, then re-run this job" >&2
       return 1
     fi
     echo "CI for $sha is still running ($pending run(s)); waited ${waited}s of ${timeout}s"
-    sleep "$interval"
-    waited=$((waited + interval))
-    # Guard against a zero interval looping forever.
-    if ((interval == 0)); then
-      waited=$((waited + 1))
-    fi
+    # At least a second between polls: a zero interval must not spin on the API.
+    sleep "$((interval > 0 ? interval : 1))"
   done
 }
 
