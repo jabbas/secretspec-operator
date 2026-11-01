@@ -681,7 +681,7 @@ comment), it tracks:
 | Pin | Where | Renovate PR | A human still |
 |---|---|---|---|
 | cosign (`COSIGN_VERSION`) | `env:` of `release.yml` | "release tooling" | nothing: `sigstore/cosign-installer` verifies the download itself |
-| syft, grype, crane (`*_VERSION`, `*_SHA256`) | `env:` of `release.yml` | "release tooling" (version only) | **updates `SYFT_SHA256` / `GRYPE_SHA256` / `CRANE_SHA256`** |
+| syft, grype, crane (`*_VERSION`, `*_SHA256`) | `env:` of `release.yml` | "release tooling" (version only; `release-pins` fails until the checksum is updated) | **updates `SYFT_SHA256` / `GRYPE_SHA256` / `CRANE_SHA256`** |
 | yq (`YQ_VERSION`, `YQ_SHA256`) | `.github/scripts/install-yq.sh` | "release tooling" (version only) | **updates `YQ_SHA256`** |
 | cargo-zigbuild, cargo-auditable | `tool:` of `taiki-e/install-action` in `ci.yml` (`e2e`) and `release.yml` (`build`); `cargo install` line below | "release tooling" | nothing |
 | ziglang | `.github/requirements/ziglang.txt` (hash-pinned; pip manager), `pip install` line below | "release tooling" | checks that the hash is the linux x86_64 wheel's |
@@ -693,7 +693,8 @@ comment), it tracks:
 Not tracked: `rust-toolchain.toml` (raised deliberately, in its own commit), a
 new Kubernetes minor in the test matrix (Renovate moves only the patch of a
 pinned minor; adding one is a decision, see below), and the runner image
-(`ubuntu-24.04`).
+(`ubuntu-24.04`; a `packageRules` entry disables the `github-runners`
+datasource, because changing the runner is a deliberate decision).
 
 Mechanics: the tools in `env:`/shell scripts carry a `# renovate: datasource=…
 depName=…` comment above the pin (read by the first `customManagers` entry; for
@@ -717,11 +718,15 @@ verified against a SHA-256 pinned next to the version; Renovate cannot compute
 it, and the repository deliberately never fetches checksums at run time (they
 would then only prove that the download matches what the same host says). A
 version bump without its checksum stops at `sha256sum --check` with an
-`::error::` that names the variable (`SYFT_SHA256`, …). Only yq runs in a pull
-request (the `release-scripts` job); syft, grype and crane run only in the
-release workflow, so the first `-rc` tag after such a bump is what shows a
-missing checksum. To avoid that, verify it in the Renovate pull request. Take
-the checksum of the `linux_amd64` archive from the upstream release:
+`::error::` that names the variable (`SYFT_SHA256`, …). This happens in the
+pull request, not at the next `-rc` tag: yq runs in the `release-scripts` job,
+and the CI job `release-pins` reads the `SYFT`/`GRYPE`/`CRANE` `_VERSION` and
+`_SHA256` entries from the `env:` block of `release.yml` (the one source of
+truth; `yq` reads them) and runs the install steps of `release.yml` itself,
+unchanged and found by job and step name. It then runs the tools with
+`--version` only. If a step is renamed or a new pinned checksum is added to
+`release.yml`, `release-pins` fails until it is updated. Take the checksum of
+the `linux_amd64` archive from the upstream release:
 
 - syft, grype: `*_checksums.txt` (archive `<tool>_<version>_linux_amd64.tar.gz`);
 - crane: `checksums.txt` of go-containerregistry (archive

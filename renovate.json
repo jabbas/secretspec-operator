@@ -179,7 +179,7 @@
         "mikefarah/yq"
       ],
       "prBodyNotes": [
-        "**Update the matching SHA-256 in this PR before merging**: `SYFT_SHA256` / `GRYPE_SHA256` / `CRANE_SHA256` in `.github/workflows/release.yml`, `YQ_SHA256` in `.github/scripts/install-yq.sh`. Take it from the checksums file of the new upstream release (the `linux_amd64` / `Linux_x86_64` archive; see docs/development.md, \"Pinned tools\"). A version bump without it fails closed (`sha256sum --check`), but only yq is installed by this PR's CI; the others fail at the next release candidate."
+        "**Update the matching SHA-256 in this PR before merging**: `SYFT_SHA256` / `GRYPE_SHA256` / `CRANE_SHA256` in `.github/workflows/release.yml`, `YQ_SHA256` in `.github/scripts/install-yq.sh`. Take it from the checksums file of the new upstream release (the `linux_amd64` / `Linux_x86_64` archive; see docs/development.md, \"Pinned tools\"). A version bump without it fails closed (`sha256sum --check`): the `release-pins` and `release-scripts` CI jobs of this PR fail with the variable named."
       ]
     },
     {

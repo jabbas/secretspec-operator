@@ -58,7 +58,11 @@ env:
   # `*_checksums.txt` of that release). Bump version and checksum together.
   # Renovate proposes the versions (the `# renovate:` comments are read by
   # renovate.json) but cannot compute the checksums: a version-only bump fails
-  # the `sha256sum --check` steps below, naming the variable to update.
+  # the `sha256sum --check` steps below, naming the variable to update. The CI
+  # job `release-pins` (ci.yml) reads the SYFT/GRYPE/CRANE entries of this
+  # block and runs those install steps on every pull request, found by job
+  # and step name: keep the names `<TOOL>_VERSION` / `<TOOL>_SHA256` and the
+  # steps "Install syft and grype" / "Install crane", or update that job.
   # renovate: datasource=github-releases depName=sigstore/cosign
   COSIGN_VERSION: v2.6.5
   # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$

@@ -113,6 +113,64 @@ jobs:
       - run: bash .github/scripts/release-mode-test.sh
       - run: bash .github/scripts/chart-compare-test.sh
 
+  # release.yml downloads syft, grype and crane against SHA-256 values pinned
+  # in its `env:` block, but it runs only on tags. This job runs the very same
+  # install steps on every pull request, so a version bump without its
+  # checksum (which Renovate cannot compute) fails here, with the `::error::`
+  # that names the variable, and not at the next release candidate.
+  #
+  # Source of truth: `env:` of release.yml, read with yq, and the install steps
+  # of release.yml themselves (extracted by job and step name and run
+  # unchanged). The alternative, a copy of the pins or of the download logic
+  # in this file, would drift without anyone noticing; the extraction is
+  # fragile only in a loud way: a renamed step or job, or a new pinned binary,
+  # fails the job. yq itself is covered by install-yq.sh, which verifies its
+  # own checksum. Nothing downloaded is run beyond `--version`.
+  release-pins:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install yq
+        run: bash .github/scripts/install-yq.sh
+      # Every `<NAME>_SHA256` of release.yml needs a covered install step
+      # below; a new pinned binary fails here until it is added.
+      - name: Check that all pinned checksums of release.yml are covered
+        run: |
+          covered="CRANE GRYPE SYFT"
+          pinned="$(yq '.env | keys | .[] | select(test("_SHA256$")) | sub("_SHA256$"; "")' .github/workflows/release.yml | sort | tr '\n' ' ')"
+          echo "pinned in release.yml: $pinned"
+          if [[ "$pinned" != "$covered " ]]; then
+            printf '::error::release.yml pins checksums for %q, this job covers %q; update the release-pins job of ci.yml\n' "$pinned" "$covered"
+            exit 1
+          fi
+      - name: Load the pins of release.yml
+        run: |
+          yq '.env | to_entries | .[] | select(.key | test("^(CRANE|GRYPE|SYFT)_(VERSION|SHA256)$")) | .key + "=" + .value' .github/workflows/release.yml | tee -a "$GITHUB_ENV"
+      - name: Run the download and checksum steps of release.yml
+        run: |
+          for entry in "image|Install syft and grype" "promote|Install syft and grype" "promote|Install crane" "helm-index|Install crane"; do
+            export JOB="${entry%%|*}" STEP="${entry#*|}"
+            script="$(yq '.jobs[strenv(JOB)].steps[] | select(.name == strenv(STEP)) | .run' .github/workflows/release.yml)"
+            if [[ "$script" != *"sha256sum --check --strict"* ]]; then
+              printf '::error::release.yml has no step %q in job %q that verifies a pinned checksum; update the release-pins job of ci.yml\n' "$STEP" "$JOB"
+              exit 1
+            fi
+            echo "--- release.yml: $JOB / $STEP"
+            bash -eo pipefail -c "$script"
+          done
+      - name: Run the downloaded tools (--version only)
+        env:
+          SYFT_CHECK_FOR_APP_UPDATE: "false"
+          GRYPE_CHECK_FOR_APP_UPDATE: "false"
+        run: |
+          syft --version
+          grype --version
+          crane version
+
   # Applies the generated CRD to a real API server and checks the fixtures
   # against its validation (CEL, schema, defaulting). Node images are those
   # published with the pinned kind release (`version:` of kind-action), by
