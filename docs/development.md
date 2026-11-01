@@ -534,10 +534,13 @@ git credentials for it (leave `HELM_CHARTS_TOKEN` unset). Needs `cosign`,
 pipefail`, so any failing command or `MISMATCH` stops it before the index is
 touched, and it does not close your terminal:
 
+Set `TAG` first to the release whose helm-index job failed; every other value in
+the block is derived from it.
+
 ```sh
 (
 set -euo pipefail
-TAG=0.1.2                  # the release tag; the version equals the tag
+TAG=X.Y.Z                  # the release tag whose helm-index job failed, e.g. 0.1.3
 VERSION="${TAG}"
 IDENTITY="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${TAG}"
 ISSUER="https://token.actions.githubusercontent.com"
