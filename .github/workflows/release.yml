@@ -3,8 +3,15 @@
 # Signed release workflow. Runs only for tags `X.Y.Z` and `X.Y.Z-rc.N`
 # (plain semver, no `v` prefix; the legacy `v0.1.0*` tags predate this).
 #
-#   verify -> build (amd64 | arm64) + licenses -> image -> smoke -> chart
-#          -> release -> helm-index
+#   mode=build   (every rc tag; an emergency final tag, see ADR 0005)
+#     verify -> build (amd64 | arm64) + licenses -> image -> smoke -> chart
+#            -> release -> helm-index
+#   mode=promote (a final tag with a release candidate on the same commit)
+#     verify -> promote -> chart -> release -> helm-index
+#
+# A final release publishes the image of its release candidate: same digest,
+# signed and attested again with the identity of the final tag, never rebuilt
+# (docs/adr/0005-promote-release-candidates.md). `verify` picks the mode.
 #
 # No job restores or saves a cache: a cache written under a tag ref can never
 # be restored by another tag, and the builds are signed artifacts.
@@ -75,7 +82,11 @@ jobs:
       actions: read # list the runs of ci.yml
     outputs:
       version: ${{ steps.version.outputs.version }}
+      base: ${{ steps.version.outputs.base }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      mode: ${{ steps.mode.outputs.mode }}
+      rc_tag: ${{ steps.mode.outputs.rc_tag }}
+      rebuild_reason: ${{ steps.mode.outputs.rebuild_reason }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -122,14 +133,25 @@ jobs:
             echo "::error::Chart.yaml version/appVersion ($chart_version/$chart_app_version) must equal the workspace version $workspace"
             exit 1
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$version"
+            echo "base=$base"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
       - name: Check the tagged commit is on main
         run: |
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
             echo "::error::$GITHUB_SHA is not reachable from main; releases are tagged on main"
             exit 1
           fi
+      # build or promote (ADR 0005). Read through the API, not from the
+      # checkout (see the script); fail-closed. Early: it is cheap, and a final
+      # tag without a release candidate should not wait for CI first.
+      - name: Select the release mode
+        id: mode
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/release-mode.sh "$GITHUB_REF_NAME" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
       # The same pinned prebuilt binaries as the `deny` and `audit` jobs of
       # ci.yml. CI may have run days before the tag, so the advisories are
       # checked again; licenses, bans and sources cannot change without a
@@ -154,6 +176,7 @@ jobs:
   # a tag ref can never be restored by another tag).
   build:
     needs: verify
+    if: needs.verify.outputs.mode == 'build'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -218,6 +241,7 @@ jobs:
   # with the build legs.
   licenses:
     needs: verify
+    if: needs.verify.outputs.mode == 'build'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -246,7 +270,8 @@ jobs:
   # Multi-arch image: push by digest, scan, SBOM, sign, attest, then tag and
   # verify. The tag is set last and only if it is free or already points at the
   # same digest, so no re-run can move it: a re-run that finds the tag resumes
-  # with the digest it points to instead of building a new image.
+  # with the digest it points to instead of building a new image. Runs only in
+  # mode=build (its `needs` are skipped in promote mode).
   image:
     needs: [verify, build, licenses] # `build` = both architecture legs
     runs-on: ubuntu-24.04
@@ -350,8 +375,13 @@ jobs:
           # from the Containerfile.
           annotations: |
             index:org.opencontainers.image.source=https://github.com/jabbas/secretspec-operator
+          # The version label is the base version X.Y.Z, also for a release
+          # candidate: the image of `X.Y.Z-rc.N` is promoted unchanged to
+          # `X.Y.Z`, so its labels must be right for both. The binary reports
+          # the same version; the rc identity lives in the tag and in the
+          # signatures.
           build-args: |
-            VERSION=${{ needs.verify.outputs.version }}
+            VERSION=${{ needs.verify.outputs.base }}
             REVISION=${{ github.sha }}
           # Keep the index plain (two platform manifests). Signing and the
           # SBOM attestation are done below with cosign.
@@ -526,8 +556,260 @@ jobs:
           docker run --rm --platform "$PLATFORM" --read-only --user 65532:65532 \
             "$IMAGE@$INDEX_DIGEST" --help
 
+  # mode=promote (ADR 0005): the release candidate's image becomes the final
+  # release. Nothing is built: the same index digest gets the final tag, and
+  # is signed and attested again with the identity of THIS (final) tag. Before
+  # anything is written, the release candidate is proved to come from this
+  # workflow (its signature), to have the platforms and labels of this commit,
+  # and to be free of fixable high/critical findings in today's database. No
+  # smoke test: the identical digest was smoke-tested in the rc run.
+  promote:
+    needs: verify
+    if: needs.verify.outputs.mode == 'promote'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write # tag the image, push signatures and attestations
+      id-token: write # keyless signing
+    env:
+      TAG: ${{ github.ref_name }}
+      BASE_VERSION: ${{ needs.verify.outputs.base }}
+      RC_TAG: ${{ needs.verify.outputs.rc_tag }}
+    outputs:
+      digest: ${{ steps.rc.outputs.digest }}
+    steps:
+      # registry-lookup.sh (the tag guard) comes from the tagged commit.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: ${{ env.COSIGN_VERSION }}
+      - name: Install syft and grype
+        run: |
+          mkdir -p "$RUNNER_TEMP/tools/bin"
+          for tool in syft grype; do
+            case "$tool" in
+              syft)  version="$SYFT_VERSION";  sha="$SYFT_SHA256";  project=anchore/syft ;;
+              grype) version="$GRYPE_VERSION"; sha="$GRYPE_SHA256"; project=anchore/grype ;;
+            esac
+            archive="${tool}_${version}_linux_amd64.tar.gz"
+            curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" \
+              "https://github.com/$project/releases/download/v${version}/${archive}"
+            echo "$sha  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
+            tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/tools/bin" "$tool"
+          done
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+      - name: Install crane
+        run: |
+          archive="go-containerregistry_Linux_x86_64.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/${archive}"
+          echo "$CRANE_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
+          mkdir -p "$RUNNER_TEMP/tools/bin"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/tools/bin" crane
+          echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      # 1. The digest the release candidate tag points to. Everything below
+      #    works on this digest, never on the tag again.
+      - name: Resolve the release candidate image
+        id: rc
+        run: |
+          # The tag was chosen by release-mode.sh; check its shape again.
+          if [[ "$RC_TAG" != "$BASE_VERSION"-rc.* || ! "${RC_TAG#"$BASE_VERSION"-rc.}" =~ ^(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::'$RC_TAG' is not a release candidate of $BASE_VERSION"
+            exit 1
+          fi
+          digest="$(crane digest "$IMAGE:$RC_TAG")"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "$IMAGE:$RC_TAG is $digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      # 2. The bytes were signed by this workflow at the release candidate's
+      #    tag: they were built and tested there.
+      - name: Verify the release candidate signature
+        env:
+          RC_DIGEST: ${{ steps.rc.outputs.digest }}
+        run: |
+          identity="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${RC_TAG}"
+          cosign verify "$IMAGE@$RC_DIGEST" \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer "$CERT_OIDC_ISSUER" > rc-verify.json
+          jq -e --arg d "$RC_DIGEST" \
+            'length > 0 and all(.[]; .critical.image."docker-manifest-digest" == $d)' rc-verify.json
+      # 3. Exactly the two platforms of a release.
+      - name: Resolve the per-platform digests
+        id: platforms
+        env:
+          RC_DIGEST: ${{ steps.rc.outputs.digest }}
+        run: |
+          crane manifest "$IMAGE@$RC_DIGEST" > index.json
+          jq . index.json
+          jq -e '(.manifests | length) == 2
+                 and ([.manifests[] | "\(.platform.os)/\(.platform.architecture)"] | sort) == ["linux/amd64", "linux/arm64"]' index.json
+          for arch in amd64 arm64; do
+            digest="$(jq -r --arg arch "$arch" \
+              '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest' index.json)"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            echo "$arch=$digest" >> "$GITHUB_OUTPUT"
+          done
+      # 4. The image is the one built from this commit, for this version: the
+      #    revision is the tagged commit and the version is the base version
+      #    (all builds label X.Y.Z, also release candidates).
+      - name: Check the image labels
+        env:
+          DIGEST_AMD64: ${{ steps.platforms.outputs.amd64 }}
+          DIGEST_ARM64: ${{ steps.platforms.outputs.arm64 }}
+        run: |
+          bad=0
+          for arch in amd64 arm64; do
+            case "$arch" in
+              amd64) digest="$DIGEST_AMD64" ;;
+              arm64) digest="$DIGEST_ARM64" ;;
+            esac
+            config="$(crane config "$IMAGE@$digest")"
+            revision="$(jq -r '.config.Labels["org.opencontainers.image.revision"] // ""' <<<"$config")"
+            version="$(jq -r '.config.Labels["org.opencontainers.image.version"] // ""' <<<"$config")"
+            echo "$arch: revision=$revision version=$version"
+            if [[ "$revision" != "$GITHUB_SHA" ]]; then
+              echo "::error::$arch image label revision is '$revision', not the tagged commit $GITHUB_SHA"
+              bad=1
+            fi
+            if [[ "$version" != "$BASE_VERSION" ]]; then
+              echo "::error::$arch image label version is '$version', not $BASE_VERSION"
+              bad=1
+            fi
+            if ! jq -e --arg arch "$arch" '.os == "linux" and .architecture == $arch' <<<"$config" > /dev/null; then
+              echo "::error::the $arch image config does not say linux/$arch"
+              bad=1
+            fi
+          done
+          exit "$bad"
+      # 5. The vulnerability database is fresher than at release candidate
+      #    time. A finding means: fix it and cut a new release candidate.
+      - name: Scan the image
+        env:
+          GRYPE_CHECK_FOR_APP_UPDATE: "false"
+          DIGEST_AMD64: ${{ steps.platforms.outputs.amd64 }}
+          DIGEST_ARM64: ${{ steps.platforms.outputs.arm64 }}
+        run: |
+          grype "registry:$IMAGE@$DIGEST_AMD64" --fail-on high --only-fixed
+          grype "registry:$IMAGE@$DIGEST_ARM64" --fail-on high --only-fixed
+      # 6. The SBOMs, named after the final tag. The attestation is the first
+      #    write; it carries the identity of this (final) tag.
+      - name: Generate the SBOMs (SPDX JSON, one per architecture)
+        env:
+          SYFT_CHECK_FOR_APP_UPDATE: "false"
+          DIGEST_AMD64: ${{ steps.platforms.outputs.amd64 }}
+          DIGEST_ARM64: ${{ steps.platforms.outputs.arm64 }}
+        run: |
+          mkdir sbom
+          syft "registry:$IMAGE@$DIGEST_AMD64" -o "spdx-json=sbom/secretspec-operator-${TAG}-linux-amd64.spdx.json"
+          syft "registry:$IMAGE@$DIGEST_ARM64" -o "spdx-json=sbom/secretspec-operator-${TAG}-linux-arm64.spdx.json"
+          ls -l sbom
+          # As in the build mode: the binary is built with cargo-auditable, so
+          # each SBOM must list the Rust crates.
+          for sbom in sbom/*.spdx.json; do
+            crates="$(jq '[.packages[] | select(any(.externalRefs[]?; (.referenceLocator // "") | startswith("pkg:cargo/")))] | length' "$sbom")"
+            echo "$sbom: $crates Rust crates"
+            test "$crates" -ge 100
+          done
+      - name: Attest the SBOMs
+        env:
+          DIGEST_AMD64: ${{ steps.platforms.outputs.amd64 }}
+          DIGEST_ARM64: ${{ steps.platforms.outputs.arm64 }}
+        run: |
+          cosign attest --yes --type spdxjson \
+            --predicate "sbom/secretspec-operator-${TAG}-linux-amd64.spdx.json" "$IMAGE@$DIGEST_AMD64"
+          cosign attest --yes --type spdxjson \
+            --predicate "sbom/secretspec-operator-${TAG}-linux-arm64.spdx.json" "$IMAGE@$DIGEST_ARM64"
+      # 7. The final identity signs the same digests.
+      - name: Sign the image
+        env:
+          RC_DIGEST: ${{ steps.rc.outputs.digest }}
+          DIGEST_AMD64: ${{ steps.platforms.outputs.amd64 }}
+          DIGEST_ARM64: ${{ steps.platforms.outputs.arm64 }}
+        run: |
+          cosign sign --yes \
+            "$IMAGE@$RC_DIGEST" "$IMAGE@$DIGEST_AMD64" "$IMAGE@$DIGEST_ARM64"
+      # 8. The only step that creates the tag; same guard as in the build
+      #    mode: an existing tag must already be this digest (a re-run).
+      - name: Tag the image
+        env:
+          RC_DIGEST: ${{ steps.rc.outputs.digest }}
+        run: |
+          source .github/scripts/registry-lookup.sh
+          # Strict: the repository exists, so a missing tag is answered
+          # "manifest unknown". Any other answer (in particular an access
+          # error) stops the job instead of risking an overwrite.
+          current="$(tag_digest "$IMAGE:$TAG" strict)"
+          if [[ -z "$current" ]]; then
+            docker buildx imagetools create --tag "$IMAGE:$TAG" "$IMAGE@$RC_DIGEST"
+            current="$(tag_digest "$IMAGE:$TAG" strict)"
+          fi
+          if [[ "$current" != "$RC_DIGEST" ]]; then
+            echo "::error::$IMAGE:$TAG points to '$current', not to the release candidate digest $RC_DIGEST; a pushed tag is never moved. Cut the next release candidate."
+            exit 1
+          fi
+      # 9. The commands documented in docs/installation.md and
+      #    docs/security.md, by tag, with the final identity; and the release
+      #    candidate's own signature is still there on the same digest.
+      - name: Verify what was published
+        env:
+          RC_DIGEST: ${{ steps.rc.outputs.digest }}
+          DIGEST_AMD64: ${{ steps.platforms.outputs.amd64 }}
+          DIGEST_ARM64: ${{ steps.platforms.outputs.arm64 }}
+        run: |
+          identity="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${TAG}"
+          rc_identity="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${RC_TAG}"
+
+          cosign verify "$IMAGE:$TAG" \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer "$CERT_OIDC_ISSUER" > verify.json
+          jq -e --arg d "$RC_DIGEST" \
+            'length > 0 and all(.[]; .critical.image."docker-manifest-digest" == $d)' verify.json
+          cosign verify "$IMAGE:$TAG" \
+            --certificate-identity "$rc_identity" \
+            --certificate-oidc-issuer "$CERT_OIDC_ISSUER" > rc-verify-by-tag.json
+          jq -e --arg d "$RC_DIGEST" \
+            'length > 0 and all(.[]; .critical.image."docker-manifest-digest" == $d)' rc-verify-by-tag.json
+
+          for digest in "$DIGEST_AMD64" "$DIGEST_ARM64"; do
+            cosign verify "$IMAGE@$digest" \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer "$CERT_OIDC_ISSUER" > /dev/null
+            cosign verify-attestation "$IMAGE@$digest" --type spdxjson \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer "$CERT_OIDC_ISSUER" > attestation.json
+            # The signed statement carries the SPDX document as its predicate.
+            jq -e -s 'length > 0 and all(.[]; (.payload | @base64d | fromjson | .predicateType == "https://spdx.dev/Document"))' attestation.json
+          done
+      # Same artifact name as the `image` job's: only one of them runs.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-sbom
+          path: sbom
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+  # The chart is packaged from the tagged commit in both modes. In promote
+  # mode it must also equal the release candidate's chart except for its
+  # version (see the comparison step). `needs` includes both modes' jobs; the
+  # condition names which of them must have run, so a skipped job is never
+  # mistaken for a passed one and a failed job never lets the chart through.
   chart:
-    needs: [verify, image, smoke]
+    needs: [verify, image, smoke, promote]
+    if: >-
+      ${{ !cancelled() && needs.verify.result == 'success' && (
+        (needs.verify.outputs.mode == 'build' && needs.image.result == 'success'
+          && needs.smoke.result == 'success' && needs.promote.result == 'skipped')
+        || (needs.verify.outputs.mode == 'promote' && needs.promote.result == 'success'
+          && needs.image.result == 'skipped' && needs.smoke.result == 'skipped')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -537,6 +819,7 @@ jobs:
     env:
       TAG: ${{ github.ref_name }}
       VERSION: ${{ needs.verify.outputs.version }}
+      RC_TAG: ${{ needs.verify.outputs.rc_tag }}
     outputs:
       # Manifest digest of the pushed, signed and verified chart; `helm-index`
       # checks the HTTP package against its layer.
@@ -613,6 +896,32 @@ jobs:
             | yq 'select(.kind == "Deployment") | .spec.template.spec.containers[].image')"
           echo "rendered image(s): $images"
           test "$images" = "$IMAGE:$TAG"
+      # Promote mode: the chart is packaged again (its version and appVersion
+      # are the final ones), but it must be the chart that was tested with the
+      # release candidate: same files, and Chart.yaml different only in
+      # version and appVersion. The rc chart is proved to come from this
+      # workflow at the rc tag before it is trusted as the reference.
+      - name: Compare with the release candidate chart
+        if: needs.verify.outputs.mode == 'promote'
+        run: |
+          mkdir rc-pull rc-extract final-extract
+          helm pull "$CHART_REPO/secretspec-operator" --version "$RC_TAG" --destination rc-pull > rc-pull.log 2>&1 || {
+            cat rc-pull.log
+            echo "::error::could not pull the release candidate chart $RC_TAG"
+            exit 1
+          }
+          cat rc-pull.log
+          rc_digest="$(awk '/^Digest:/ {print $2}' rc-pull.log)"
+          [[ "$rc_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          identity="https://github.com/jabbas/secretspec-operator/.github/workflows/release.yml@refs/tags/${RC_TAG}"
+          cosign verify "${CHART_REPO#oci://}/secretspec-operator@$rc_digest" \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer "$CERT_OIDC_ISSUER" > rc-chart-verify.json
+          jq -e --arg d "$rc_digest" \
+            'length > 0 and all(.[]; .critical.image."docker-manifest-digest" == $d)' rc-chart-verify.json
+          tar -xzf "rc-pull/secretspec-operator-${RC_TAG}.tgz" -C rc-extract
+          tar -xzf "chart/secretspec-operator-${VERSION}.tgz" -C final-extract
+          bash .github/scripts/chart-compare.sh rc-extract/secretspec-operator final-extract/secretspec-operator
       - name: Push the chart
         id: push
         if: steps.existing.outputs.published != 'true'
@@ -665,8 +974,16 @@ jobs:
           overwrite: true
           retention-days: 7
 
+  # The SBOMs come from `promote` or from `image` (both upload the artifact
+  # `release-sbom`; only one of them runs). Same explicit job graph as `chart`.
   release:
-    needs: [verify, image, smoke, chart]
+    needs: [verify, image, smoke, promote, chart]
+    if: >-
+      ${{ !cancelled() && needs.verify.result == 'success' && needs.chart.result == 'success' && (
+        (needs.verify.outputs.mode == 'build' && needs.image.result == 'success'
+          && needs.smoke.result == 'success' && needs.promote.result == 'skipped')
+        || (needs.verify.outputs.mode == 'promote' && needs.promote.result == 'success'
+          && needs.image.result == 'skipped' && needs.smoke.result == 'skipped')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -675,6 +992,10 @@ jobs:
       TAG: ${{ github.ref_name }}
       VERSION: ${{ needs.verify.outputs.version }}
       PRERELEASE: ${{ needs.verify.outputs.prerelease }}
+      MODE: ${{ needs.verify.outputs.mode }}
+      RC_TAG: ${{ needs.verify.outputs.rc_tag }}
+      REBUILD_REASON: ${{ needs.verify.outputs.rebuild_reason }}
+      PROMOTED_DIGEST: ${{ needs.promote.outputs.digest }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -697,9 +1018,16 @@ jobs:
           SPDX SBOMs are signed attestations on the per-platform images and are
           attached here as plain files. How to verify: [docs/security.md](https://github.com/$GITHUB_REPOSITORY/blob/$TAG/docs/security.md#release-signing-and-sbom).
 
-          ---
-
           EOF
+          # How the image was made (ADR 0005). The values come from the env,
+          # never from the template text.
+          if [[ "$MODE" == promote ]]; then
+            [[ "$PROMOTED_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+            printf '%s\n\n' "Image promoted from \`$RC_TAG\` without rebuilding (digest \`$PROMOTED_DIGEST\`)." >> notes.md
+          elif [[ -n "$REBUILD_REASON" ]]; then
+            printf 'Rebuilt without promoting a release candidate: %s\n\n' "$REBUILD_REASON" >> notes.md
+          fi
+          printf -- '---\n\n' >> notes.md
 
           args=(--repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG"
                 --notes-file notes.md --generate-notes)
