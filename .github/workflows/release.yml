@@ -56,11 +56,18 @@ env:
   # Pinned tools downloaded as release binaries. Each is verified against the
   # SHA-256 of the linux_amd64 archive (taken from the upstream
   # `*_checksums.txt` of that release). Bump version and checksum together.
+  # Renovate proposes the versions (the `# renovate:` comments are read by
+  # renovate.json) but cannot compute the checksums: a version-only bump fails
+  # the `sha256sum --check` steps below, naming the variable to update.
+  # renovate: datasource=github-releases depName=sigstore/cosign
   COSIGN_VERSION: v2.6.5
+  # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
   SYFT_VERSION: 1.55.0
   SYFT_SHA256: bb65249542db5fedeeb4d3f9b018b75e7264dbfbbb10486f044581a92f90490d
+  # renovate: datasource=github-releases depName=anchore/grype extractVersion=^v(?<version>.+)$
   GRYPE_VERSION: 0.121.0
   GRYPE_SHA256: 64e07133d3486115de647a66581461dccf5c732748a0a3119077395565f15519
+  # renovate: datasource=github-releases depName=google/go-containerregistry extractVersion=^v(?<version>.+)$
   CRANE_VERSION: 0.22.1
   CRANE_SHA256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
   HELM_REPO_URL: https://jabbas.github.io/helm-charts
@@ -329,7 +336,10 @@ jobs:
             archive="${tool}_${version}_linux_amd64.tar.gz"
             curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" \
               "https://github.com/$project/releases/download/v${version}/${archive}"
-            echo "$sha  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
+            if ! echo "$sha  $RUNNER_TEMP/$archive" | sha256sum --check --strict -; then
+              echo "::error::$archive does not match the pinned checksum; update ${tool^^}_SHA256 (and ${tool^^}_VERSION) together in the env block of release.yml, from the checksums file of the upstream release (docs/development.md, \"Pinned tools\")"
+              exit 1
+            fi
             tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/tools/bin" "$tool"
           done
           echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
@@ -597,7 +607,10 @@ jobs:
             archive="${tool}_${version}_linux_amd64.tar.gz"
             curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" \
               "https://github.com/$project/releases/download/v${version}/${archive}"
-            echo "$sha  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
+            if ! echo "$sha  $RUNNER_TEMP/$archive" | sha256sum --check --strict -; then
+              echo "::error::$archive does not match the pinned checksum; update ${tool^^}_SHA256 (and ${tool^^}_VERSION) together in the env block of release.yml, from the checksums file of the upstream release (docs/development.md, \"Pinned tools\")"
+              exit 1
+            fi
             tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/tools/bin" "$tool"
           done
           echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
@@ -606,7 +619,10 @@ jobs:
           archive="go-containerregistry_Linux_x86_64.tar.gz"
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" \
             "https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/${archive}"
-          echo "$CRANE_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
+          if ! echo "$CRANE_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check --strict -; then
+            echo "::error::$archive does not match the pinned checksum; update CRANE_SHA256 (and CRANE_VERSION) together in the env block of release.yml, from checksums.txt of the upstream release (docs/development.md, \"Pinned tools\")"
+            exit 1
+          fi
           mkdir -p "$RUNNER_TEMP/tools/bin"
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/tools/bin" crane
           echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"
@@ -1135,7 +1151,10 @@ jobs:
           archive="go-containerregistry_Linux_x86_64.tar.gz"
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" \
             "https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/${archive}"
-          echo "$CRANE_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
+          if ! echo "$CRANE_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check --strict -; then
+            echo "::error::$archive does not match the pinned checksum; update CRANE_SHA256 (and CRANE_VERSION) together in the env block of release.yml, from checksums.txt of the upstream release (docs/development.md, \"Pinned tools\")"
+            exit 1
+          fi
           mkdir -p "$RUNNER_TEMP/tools/bin"
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/tools/bin" crane
           echo "$RUNNER_TEMP/tools/bin" >> "$GITHUB_PATH"

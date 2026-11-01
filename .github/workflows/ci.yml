@@ -115,7 +115,9 @@ jobs:
 
   # Applies the generated CRD to a real API server and checks the fixtures
   # against its validation (CEL, schema, defaulting). Node images are those
-  # published with the pinned kind release (kind v0.33.0), by digest.
+  # published with the pinned kind release (`version:` of kind-action), by
+  # digest. Renovate moves the kind release and the node images together
+  # (renovate.json); a new Kubernetes minor is added to the matrices by hand.
   server-validation:
     runs-on: ubuntu-24.04
     strategy:

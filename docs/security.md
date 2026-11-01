@@ -265,7 +265,7 @@ and a `SHA256SUMS` file. The SBOM files there are copies; the signed
 attestations in the registry are the authoritative ones, and `SHA256SUMS`
 protects only the download, it is not signed itself.
 
-The signatures and attestations are created with cosign v2.6.5, in the legacy
+The signatures and attestations are created with cosign v2, in the legacy
 (OCI tag based) format. cosign v2 and v3 can verify them with the commands
 below.
 

@@ -6,9 +6,12 @@
 # (the scripts under test parse and rewrite the shared Helm index with it, so
 # the runner image's yq is not trusted to be this one). The archive is verified
 # against a SHA-256 taken from the `checksums` file of that upstream release
-# (column "SHA-256" in `checksums_hashes_order`). Bump both together.
+# (column "SHA-256" in `checksums_hashes_order`). Bump both together. Renovate
+# proposes the version (see the comment below, read by renovate.json) but
+# cannot compute the checksum: a version-only bump fails the check below.
 set -euo pipefail
 
+# renovate: datasource=github-releases depName=mikefarah/yq
 YQ_VERSION=v4.54.1
 YQ_SHA256=e68a456f90c577af3fe4960184b3a3cf5c461e0348407c10f107da3a5fec8972
 
@@ -17,7 +20,10 @@ dir="${RUNNER_TEMP:?RUNNER_TEMP is not set (this script is for Actions runners)}
 mkdir -p "$dir"
 curl -fsSL --retry 3 -o "$RUNNER_TEMP/$archive" \
   "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${archive}"
-echo "$YQ_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check --strict -
+if ! echo "$YQ_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check --strict -; then
+  echo "::error::$archive does not match the pinned checksum; update YQ_SHA256 (and YQ_VERSION) together in .github/scripts/install-yq.sh, from the checksums file of the upstream release (docs/development.md, \"Pinned tools\")"
+  exit 1
+fi
 tar -xzf "$RUNNER_TEMP/$archive" -C "$dir" ./yq_linux_amd64
 mv "$dir/yq_linux_amd64" "$dir/yq"
 echo "$dir" >> "${GITHUB_PATH:?GITHUB_PATH is not set}"

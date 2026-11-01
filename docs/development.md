@@ -7,7 +7,8 @@
   use. Raise it deliberately, in its own commit.)
 - `cargo-deny` for `cargo deny check`
 - For the server-side tests only: a container runtime — **Docker or Podman** —
-  and [kind](https://kind.sigs.k8s.io/) (the CI uses v0.33.0)
+  and [kind](https://kind.sigs.k8s.io/) (the CI pins its version in
+  `.github/workflows/ci.yml`)
 
 ## Checks before committing
 
@@ -52,7 +53,7 @@ the variable is unset.
 
 CI runs the suite on Kubernetes 1.34 and 1.37 (kind node images pinned by
 digest, see `.github/workflows/ci.yml`). Locally, with the node images
-published for kind v0.33.0:
+published for the kind release pinned there:
 
 ```sh
 # Kubernetes 1.34
@@ -542,7 +543,7 @@ runner image (it only reads the OCI manifest here).
 The index logic is tested without network by
 `bash .github/scripts/helm-index-test.sh` (needs `helm`, `yq`, `jq`, `git`,
 `python3`; `HELM=/path/to/helm` selects another helm; the CI job
-`release-scripts` runs it with helm v3.22.1): new version, same-digest re-run,
+`release-scripts` runs it with the helm pinned in `ci.yml`): new version, same-digest re-run,
 different digest, invalid entries, a shared index with a foreign chart, an
 invalid foreign entry, unknown fields and top-level `annotations`/`serverInfo`
 that must survive, tampered documents that must fail, a push race, bounded
@@ -657,30 +658,82 @@ version.
   - The Environment `helm-charts` has a deployment tag policy
     (`[0-9]*.[0-9]*.[0-9]*`) and holds `HELM_CHARTS_TOKEN`; only release tags
     can use it.
-- **Scanner and cosign versions** are pinned in the `env:` block of
-  `release.yml` (so are `crane`, used by `helm-index`, and the URL of the HTTP
-  repository). The syft and grype archives are verified against a SHA-256 that
-  is pinned next to the version; when bumping one, take the checksum of the
-  `linux_amd64.tar.gz` from the `*_checksums.txt` of that upstream release and
-  change both. For crane the archive is `go-containerregistry_Linux_x86_64.tar.gz`
-  and the checksum file is `checksums.txt` of the go-containerregistry release.
-  `yq` is pinned in `.github/scripts/install-yq.sh` (archive
-  `yq_linux_amd64.tar.gz`; its checksum is the SHA-256 column of the `checksums`
-  file of the release, the column order is in `checksums_hashes_order`). cosign
-  is installed by the SHA-pinned `sigstore/cosign-installer`, which verifies the
-  download itself. Renovate does not touch these pins.
-- **Build tools** in `build` (and in the CI `e2e` job): `cargo-zigbuild` and
-  `cargo-auditable` are pinned in the `taiki-e/install-action` step; `ziglang` is
-  installed with `--require-hashes` from `.github/requirements/ziglang.txt` (the
-  hash is that of the linux x86_64 wheel; bump version and hash together). The
-  BuildKit image of `docker/setup-buildx-action` is pinned by digest
-  (`driver-opts`) in both workflows; bump all places together. Renovate does not
-  touch these pins either.
+- **Pinned tools** (cosign, syft, grype, crane, yq, helm, kind and its node
+  images, cargo-zigbuild, cargo-auditable, cargo-deny, cargo-audit, ziglang,
+  BuildKit): see [Pinned tools and Renovate](#pinned-tools-and-renovate) below.
 - **Accepted residual risk.** If an existing chart version stays unreadable
   during *both* lookups (the first and the one right before `helm push`), it
   could be overwritten; this is accepted because the registry would have to
   answer access errors for a package our own credentials can write twice in a
   row, and closing it would also block the first release, whose "never pushed"
   answer looks exactly the same.
-- **cosign.** Releases are signed with cosign v2.6.5 in the legacy format, which
-  cosign v2 and v3 both verify.
+- **cosign.** Releases are signed with cosign v2 (`COSIGN_VERSION` in
+  `release.yml`) in the legacy format, which cosign v2 and v3 both verify.
+
+### Pinned tools and Renovate
+
+Everything the CI and the release download is pinned, and
+[Renovate](https://docs.renovatebot.com/) (`renovate.json`, weekly, Monday
+before 6:00) opens the pull requests for the pins; the grouping is in the
+`packageRules`. Besides cargo and the GitHub Actions (by SHA, with a `# vX`
+comment), it tracks:
+
+| Pin | Where | Renovate PR | A human still |
+|---|---|---|---|
+| cosign (`COSIGN_VERSION`) | `env:` of `release.yml` | "release tooling" | nothing: `sigstore/cosign-installer` verifies the download itself |
+| syft, grype, crane (`*_VERSION`, `*_SHA256`) | `env:` of `release.yml` | "release tooling" (version only) | **updates `SYFT_SHA256` / `GRYPE_SHA256` / `CRANE_SHA256`** |
+| yq (`YQ_VERSION`, `YQ_SHA256`) | `.github/scripts/install-yq.sh` | "release tooling" (version only) | **updates `YQ_SHA256`** |
+| cargo-zigbuild, cargo-auditable | `tool:` of `taiki-e/install-action` in `ci.yml` (`e2e`) and `release.yml` (`build`); `cargo install` line below | "release tooling" | nothing |
+| ziglang | `.github/requirements/ziglang.txt` (hash-pinned; pip manager), `pip install` line below | "release tooling" | checks that the hash is the linux x86_64 wheel's |
+| BuildKit image | `driver-opts` of `docker/setup-buildx-action` (version comment and index digest) in both workflows | "release tooling" | nothing |
+| helm | `version:` of `azure/setup-helm` in both workflows | "ci tooling" | nothing |
+| cargo-deny, cargo-audit | `tool:` of `taiki-e/install-action` in `ci.yml` (`deny`, `audit`) and `release.yml` (`verify`) | "ci tooling" | nothing |
+| kind, kind node images | `version:` of `helm/kind-action`, and the `node_image` matrices of `ci.yml` and the commands in this file | "kind" (one PR) | compares the digests with the release notes of that kind release |
+
+Not tracked: `rust-toolchain.toml` (raised deliberately, in its own commit), a
+new Kubernetes minor in the test matrix (Renovate moves only the patch of a
+pinned minor; adding one is a decision, see below), and the runner image
+(`ubuntu-24.04`).
+
+Mechanics: the tools in `env:`/shell scripts carry a `# renovate: datasource=…
+depName=…` comment above the pin (read by the first `customManagers` entry; for
+tags with a `v` that the pin lacks, `extractVersion=^v(?<version>.+)$`). The
+cargo tools, ziglang in this file, the BuildKit reference and the node images
+are matched by their own patterns. Keep the shape of those lines when editing
+them; after changing `renovate.json` run the validator and a local lookup:
+
+```sh
+npx --yes --package renovate@latest -- renovate-config-validator --strict
+```
+
+(Name the version: a bare `renovate` may be a stale copy from the npx cache that
+does not know `managerFilePatterns`.) A local lookup that lists what Renovate
+extracts from this repository is `renovate --platform=local --dry-run=lookup`
+with `LOG_LEVEL=debug` and a GitHub token in `RENOVATE_GITHUB_COM_TOKEN`
+(without one, the GitHub datasources are skipped).
+
+**Checksums stay pinned and fail closed.** syft, grype, crane and yq are
+verified against a SHA-256 pinned next to the version; Renovate cannot compute
+it, and the repository deliberately never fetches checksums at run time (they
+would then only prove that the download matches what the same host says). A
+version bump without its checksum stops at `sha256sum --check` with an
+`::error::` that names the variable (`SYFT_SHA256`, …). Only yq runs in a pull
+request (the `release-scripts` job); syft, grype and crane run only in the
+release workflow, so the first `-rc` tag after such a bump is what shows a
+missing checksum. To avoid that, verify it in the Renovate pull request. Take
+the checksum of the `linux_amd64` archive from the upstream release:
+
+- syft, grype: `*_checksums.txt` (archive `<tool>_<version>_linux_amd64.tar.gz`);
+- crane: `checksums.txt` of go-containerregistry (archive
+  `go-containerregistry_Linux_x86_64.tar.gz`);
+- yq: the SHA-256 column of the `checksums` file (the column order is in
+  `checksums_hashes_order`; archive `yq_linux_amd64.tar.gz`).
+
+The node images are published with a kind release: take the digests from the
+release notes of the kind version in the pull request and compare them with the
+ones Renovate wrote (Renovate reads the digest of the tag from the registry).
+**A new Kubernetes minor** (Design §10.5: 1.34 and the newest stable minor) is
+added by hand: new matrix entries in the three kind jobs of `ci.yml` and the
+commands in this file, from the node images of the newest kind release; run the
+server-side, integration and end-to-end suites on a fresh cluster of each new
+image first.
