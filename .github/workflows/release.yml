@@ -501,7 +501,9 @@ jobs:
             current="$(tag_digest "$IMAGE:$TAG" strict)"
           fi
           if [[ "$current" != "$INDEX_DIGEST" ]]; then
-            echo "::error::$IMAGE:$TAG points to '$current', not to $INDEX_DIGEST; a pushed tag is never moved. Cut the next release candidate."
+            # %q: `current` is read from the registry (see the annotation check).
+            printf '::error::%s:%s points to %q, not to %s; a pushed tag is never moved. Cut the next release candidate.\n' \
+              "$IMAGE" "$TAG" "$current" "$INDEX_DIGEST"
             exit 1
           fi
       # The commands documented in docs/installation.md and docs/security.md.
@@ -640,7 +642,8 @@ jobs:
         run: |
           # The tag was chosen by release-mode.sh; check its shape again.
           if [[ "$RC_TAG" != "$BASE_VERSION"-rc.* || ! "${RC_TAG#"$BASE_VERSION"-rc.}" =~ ^(0|[1-9][0-9]*)$ ]]; then
-            echo "::error::'$RC_TAG' is not a release candidate of $BASE_VERSION"
+            # %q: the tag name comes from the GitHub API (release-mode.sh).
+            printf '::error::%q is not a release candidate of %s\n' "$RC_TAG" "$BASE_VERSION"
             exit 1
           fi
           digest="$(crane digest "$IMAGE:$RC_TAG")"
@@ -694,11 +697,12 @@ jobs:
             version="$(jq -r '.config.Labels["org.opencontainers.image.version"] // ""' <<<"$config")"
             echo "$arch: revision=$revision version=$version"
             if [[ "$revision" != "$GITHUB_SHA" ]]; then
-              echo "::error::$arch image label revision is '$revision', not the tagged commit $GITHUB_SHA"
+              # %q: the labels are read from the registry.
+              printf '::error::%s image label revision is %q, not the tagged commit %s\n' "$arch" "$revision" "$GITHUB_SHA"
               bad=1
             fi
             if [[ "$version" != "$BASE_VERSION" ]]; then
-              echo "::error::$arch image label version is '$version', not $BASE_VERSION"
+              printf '::error::%s image label version is %q, not %s\n' "$arch" "$version" "$BASE_VERSION"
               bad=1
             fi
             if ! jq -e --arg arch "$arch" '.os == "linux" and .architecture == $arch' <<<"$config" > /dev/null; then
@@ -770,7 +774,9 @@ jobs:
             current="$(tag_digest "$IMAGE:$TAG" strict)"
           fi
           if [[ "$current" != "$RC_DIGEST" ]]; then
-            echo "::error::$IMAGE:$TAG points to '$current', not to the release candidate digest $RC_DIGEST; a pushed tag is never moved. Cut the next release candidate."
+            # %q: `current` is read from the registry (see the annotation check).
+            printf '::error::%s:%s points to %q, not to the release candidate digest %s; a pushed tag is never moved. Cut the next release candidate.\n' \
+              "$IMAGE" "$TAG" "$current" "$RC_DIGEST"
             exit 1
           fi
       # 9. The commands documented in docs/installation.md and
@@ -926,7 +932,7 @@ jobs:
           mkdir rc-pull rc-extract final-extract
           helm pull "$CHART_REPO/secretspec-operator" --version "$RC_TAG" --destination rc-pull > rc-pull.log 2>&1 || {
             cat rc-pull.log
-            echo "::error::could not pull the release candidate chart $RC_TAG"
+            printf '::error::could not pull the release candidate chart %q\n' "$RC_TAG"
             exit 1
           }
           cat rc-pull.log
@@ -1170,7 +1176,7 @@ jobs:
         id: package
         run: |
           if [[ ! "$CHART_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "::error::the chart digest '$CHART_DIGEST' from the chart job is not a sha256 digest"
+            printf '::error::the chart digest %q from the chart job is not a sha256 digest\n' "$CHART_DIGEST"
             exit 1
           fi
           file="secretspec-operator-${VERSION}.tgz"
@@ -1206,7 +1212,8 @@ jobs:
           curl -fsSL --retry 3 -o SHA256SUMS "$release_url/SHA256SUMS"
           listed="$(awk -v f="$file" '$2 == f {print $1}' SHA256SUMS)"
           if [[ "$listed" != "$sha" ]]; then
-            echo "::error::SHA256SUMS lists '$listed' for $file, the release asset is $sha"
+            # %q: SHA256SUMS is a downloaded file.
+            printf '::error::SHA256SUMS lists %q for %s, the release asset is %s\n' "$listed" "$file" "$sha"
             exit 1
           fi
           echo "sha256=$sha" >> "$GITHUB_OUTPUT"
