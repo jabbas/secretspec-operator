@@ -420,7 +420,9 @@ jobs:
           # jq in the assignment stops the step too.
           source="$(jq -r '.annotations["org.opencontainers.image.source"] // ""' index.json)"
           if [[ "$source" != "https://github.com/jabbas/secretspec-operator" ]]; then
-            echo "::error::the image index has the source annotation '$source', not the repository URL"
+            # %q: the value comes from the registry; a newline in it must not
+            # end the workflow command and start another one.
+            printf '::error::the image index has the source annotation %q, not the repository URL\n' "$source"
             exit 1
           fi
           for arch in amd64 arm64; do
