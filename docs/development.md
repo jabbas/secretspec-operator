@@ -507,11 +507,17 @@ that has a job with an `if:` among its transitive `needs` must carry its own
 explicit `if:`** that
 
 - contains `!cancelled()` (or `always()`), replacing the implicit `success()`, and
-- names `needs.<job>.result` for every job in its own `needs`, each compared
-  with `'success'` (or, for a job of the other mode, `'skipped'`).
+- compares `needs.<job>.result` for every job in its own `needs`, and every such
+  comparison is exactly `== 'success'` or `== 'skipped'`. Any other operator or
+  value (`!=`, `'failure'`, `'cancelled'`, …) is rejected: `!= 'failure'`, for
+  example, would let a cancelled dependency through. `== 'skipped'` is accepted
+  only for a job that has an `if:` itself (one that can be skipped by mode).
 
 A failed or cancelled dependency then still stops the job, and a skipped one is
-a stated decision. This is what `helm-index` lacked after the promote mode was
+a stated decision. The check reads the text of the `if:`, it does not parse the
+expression: it guarantees that each dependency is compared in one of the two
+allowed ways, not that the comparisons are combined correctly with `&&` and
+`||`; that stays a matter for review. This is what `helm-index` lacked after the promote mode was
 introduced: it was skipped in both modes, and the HTTP Helm repository was not
 updated. `.github/scripts/release-graph-check.sh` checks the rule statically
 (with `yq`; "can be skipped" is derived from the presence of an `if:`, so a new

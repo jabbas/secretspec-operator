@@ -13,9 +13,19 @@
 # happened to `helm-index`). Therefore every job that has a skippable job among
 # its transitive `needs` must carry an explicit `if:` that
 #   - contains `!cancelled()` or `always()` (replaces the implicit success()), and
-#   - names `needs.<job>.result` for every job in its own `needs`, so each
-#     dependency is judged explicitly (a skipped one is a decision, not an
-#     accident) and a failed one still stops the job.
+#   - compares `needs.<job>.result` for every job in its own `needs`, and
+#     every such comparison is exactly `== 'success'` or `== 'skipped'` (a
+#     skipped dependency is a decision, not an accident; a failed or cancelled
+#     one can never pass, which `!= 'failure'` would allow for a cancelled
+#     one). `== 'skipped'` is only meaningful for a job that has an `if:`
+#     itself, i.e. one that can be skipped.
+#
+# Limitation (principle #17): the check looks at the text of the `if:`, not at
+# its logic. It does not parse the expression, so it cannot prove that the
+# comparisons are combined correctly (`&&` vs `||`); it only guarantees that
+# each dependency is mentioned and compared in the two allowed ways, which
+# covers the expression shapes used in release.yml. The review of the
+# combination stays with a human.
 #
 # "Skippable" is derived (any job that has an `if:`), not listed by hand, so a
 # job added later is covered without editing this script. That is a superset of
@@ -66,6 +76,11 @@ ancestors() { # <job>
   printf '%s' "$seen"
 }
 
+# <pattern> <text>: how many times the extended regular expression matches.
+count_matches() {
+  { grep -oE -- "$1" <<<"$2" || true; } | wc -l | tr -d ' '
+}
+
 violations=0
 violation() { # <job> <message>
   echo "release-graph-check: FAIL job '$1': $2" >&2
@@ -89,12 +104,23 @@ while IFS= read -r job; do
     violation "$job" "comes after the skippable job '$trigger' but has no 'if:'; the implicit success() skips it whenever '$trigger' is skipped"
     continue
   fi
+  # yq returns the value without YAML comments; this is a second line of
+  # defence, so that no comment text can ever satisfy a check below.
+  condition="$(sed -E 's/(^|[[:space:]])#.*$//' <<<"$condition")"
   if [[ "$condition" != *'!cancelled()'* && "$condition" != *'always()'* ]]; then
     violation "$job" "comes after the skippable job '$trigger'; its 'if:' needs !cancelled() or always() to replace the implicit success()"
   fi
   while IFS= read -r need; do
-    if [[ "$condition" != *"needs.$need.result"* ]]; then
+    mentions="$(count_matches "needs\.$need\.result" "$condition")"
+    exact="$(count_matches "needs\.$need\.result == '(success|skipped)'" "$condition")"
+    skipped="$(count_matches "needs\.$need\.result == 'skipped'" "$condition")"
+    if [[ "$mentions" -eq 0 ]]; then
       violation "$job" "its 'if:' does not check needs.$need.result"
+    elif [[ "$mentions" -ne "$exact" ]]; then
+      violation "$job" "needs.$need.result must be compared only as == 'success' or == 'skipped' (found another operator or value)"
+    fi
+    if [[ "$skipped" -gt 0 ]] && ! grep -qxF -- "$need" <<<"$skippable"; then
+      violation "$job" "its 'if:' accepts '$need' as skipped, but '$need' has no 'if:' and is never skipped"
     fi
   done < <(direct_needs "$job")
 done <<<"$jobs"

@@ -39,10 +39,12 @@ expect_violation() { # <name> <message fragment>
 }
 
 # The release graph in miniature: `verify`, one job that only runs in one mode
-# (`promote`), and a `chart` join after it. $1 is the `if:` of `publish`, a
-# job after `chart`; "-" leaves it out.
-write_workflow() { # <file> <publish if>
+# (`promote`), and a `chart` join after it. $2 is the `if:` of `publish`, a
+# job after `chart`; "-" leaves it out. $3 is the `if:` of `chart` (the
+# default is a correct one).
+write_workflow() { # <file> <publish if> [chart if]
   local file="$1" condition="$2"
+  local chart_condition="${3:-\${{ !cancelled() && needs.verify.result == 'success' && (needs.promote.result == 'success' || needs.promote.result == 'skipped') }}}"
   {
     cat <<'EOF'
 jobs:
@@ -52,10 +54,9 @@ jobs:
     needs: verify
     if: needs.verify.outputs.mode == 'promote'
     runs-on: ubuntu-24.04
-  chart:
-    needs: [verify, promote]
-    if: ${{ !cancelled() && needs.verify.result == 'success' && needs.promote.result != 'failure' }}
-    runs-on: ubuntu-24.04
+EOF
+    printf '  chart:\n    needs: [verify, promote]\n    if: %s\n    runs-on: ubuntu-24.04\n' "$chart_condition"
+    cat <<'EOF'
   publish:
     needs: [verify, chart]
 EOF
@@ -90,6 +91,45 @@ expect_violation "an 'if:' without !cancelled() or always() fails" "needs !cance
 write_workflow "$work/missing-result.yml" "\${{ !cancelled() && needs.verify.result == 'success' }}"
 check "$work/missing-result.yml"
 expect_violation "an 'if:' that skips one dependency's result fails" "does not check needs.chart.result"
+
+good_publish="\${{ !cancelled() && needs.verify.result == 'success' && needs.chart.result == 'success' }}"
+
+# The comparison must be exactly == 'success' or == 'skipped'.
+write_workflow "$work/not-failure.yml" "$good_publish" \
+  "\${{ !cancelled() && needs.verify.result == 'success' && needs.promote.result != 'failure' }}"
+check "$work/not-failure.yml"
+expect_violation "!= 'failure' fails (it lets a cancelled dependency through)" "needs.promote.result must be compared only as"
+
+write_workflow "$work/is-failure.yml" "$good_publish" \
+  "\${{ !cancelled() && needs.verify.result == 'success' && needs.promote.result == 'failure' }}"
+check "$work/is-failure.yml"
+expect_violation "== 'failure' fails" "needs.promote.result must be compared only as"
+
+write_workflow "$work/is-cancelled.yml" "$good_publish" \
+  "\${{ !cancelled() && needs.verify.result == 'success' && needs.promote.result == 'cancelled' }}"
+check "$work/is-cancelled.yml"
+expect_violation "== 'cancelled' fails" "needs.promote.result must be compared only as"
+
+write_workflow "$work/text-only.yml" "$good_publish" \
+  "\${{ !cancelled() && needs.verify.result == 'success' && format('{0}', 'needs.promote.result') != '' }}"
+check "$work/text-only.yml"
+expect_violation "a text-only mention of a dependency's result fails" "needs.promote.result must be compared only as"
+
+# A YAML comment is not part of the value, so it cannot stand in for a check.
+write_workflow "$work/comment.yml" "$good_publish" \
+  "\${{ !cancelled() && needs.verify.result == 'success' }} # needs.promote.result == 'success'"
+check "$work/comment.yml"
+expect_violation "a mention in a comment does not count" "does not check needs.promote.result"
+
+write_workflow "$work/skipped-never.yml" \
+  "\${{ !cancelled() && needs.verify.result == 'skipped' && needs.chart.result == 'success' }}"
+check "$work/skipped-never.yml"
+expect_violation "'skipped' on a job without an 'if:' fails" "accepts 'verify' as skipped"
+
+write_workflow "$work/skipped-ok.yml" "$good_publish" \
+  "\${{ !cancelled() && needs.verify.result == 'success' && needs.promote.result == 'skipped' }}"
+check "$work/skipped-ok.yml"
+expect_pass "'skipped' on a job that has an 'if:' passes"
 
 # `needs` of a single job as a string, and a dependency two levels down.
 cat > "$work/transitive.yml" <<'EOF'
