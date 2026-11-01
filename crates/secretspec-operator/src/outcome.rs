@@ -126,6 +126,38 @@ pub fn kube_error_summary(err: &kube::Error) -> String {
     }
 }
 
+/// HTTP status of an authorisation or admission rejection.
+const HTTP_FORBIDDEN: u16 = 403;
+
+/// The `details.causes[].reason` the API server's `NamespaceLifecycle`
+/// admission plugin attaches when it rejects a create in a namespace that is
+/// being deleted.
+const CAUSE_NAMESPACE_TERMINATING: &str = "NamespaceTerminating";
+
+/// Whether `err` is the API server refusing a write because the namespace is
+/// being terminated.
+///
+/// The signal is the structured cause `NamespaceTerminating` on a `403`
+/// status (`details.causes`, which kube's `Status` exposes), not the message
+/// text: it is the machine-readable part of the API, so it needs no extra
+/// request and no RBAC for Namespaces (the operator has none), and it cannot
+/// be confused with a real RBAC `403 Forbidden`, which carries no such cause.
+/// Reading the cause never touches the status message, which can echo request
+/// data.
+#[must_use]
+pub fn is_namespace_terminating(err: &kube::Error) -> bool {
+    let kube::Error::Api(status) = err else {
+        return false;
+    };
+    status.code == HTTP_FORBIDDEN
+        && status.details.as_ref().is_some_and(|details| {
+            details
+                .causes
+                .iter()
+                .any(|cause| cause.reason == CAUSE_NAMESPACE_TERMINATING)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     // Tests report through panics.
@@ -306,6 +338,76 @@ mod tests {
         let message = apply_failed_message(&kube::Error::Api(Box::new(status)));
         assert_eq!(message, "apply of Secret failed: 422 Invalid");
         assert!(!message.contains("c2VjcmV0"));
+    }
+
+    fn api_error(code: u16, reason: &str, causes: &[&str]) -> kube::Error {
+        let causes = causes
+            .iter()
+            .map(|cause| kube::core::response::StatusCause {
+                reason: (*cause).to_owned(),
+                message: "x".to_owned(),
+                field: "metadata.namespace".to_owned(),
+            })
+            .collect();
+        kube::Error::Api(Box::new(kube::core::Status {
+            code,
+            reason: reason.to_owned(),
+            details: Some(kube::core::response::StatusDetails {
+                name: "db".to_owned(),
+                group: String::new(),
+                kind: "secrets".to_owned(),
+                uid: String::new(),
+                causes,
+                retry_after_seconds: 0,
+            }),
+            ..kube::core::Status::default()
+        }))
+    }
+
+    #[test]
+    fn terminating_namespace_is_recognised_by_its_cause() {
+        assert!(is_namespace_terminating(&api_error(
+            403,
+            "Forbidden",
+            &["NamespaceTerminating"]
+        )));
+        // The cause may come with others.
+        assert!(is_namespace_terminating(&api_error(
+            403,
+            "Forbidden",
+            &["Other", "NamespaceTerminating"]
+        )));
+    }
+
+    #[test]
+    fn other_errors_are_not_a_terminating_namespace() {
+        // A real RBAC rejection has no cause.
+        assert!(!is_namespace_terminating(&api_error(403, "Forbidden", &[])));
+        assert!(!is_namespace_terminating(&api_error(
+            403,
+            "Forbidden",
+            &["SomethingElse"]
+        )));
+        // No details at all.
+        assert!(!is_namespace_terminating(&kube::Error::Api(Box::new(
+            kube::core::Status {
+                code: 403,
+                reason: "Forbidden".to_owned(),
+                ..kube::core::Status::default()
+            }
+        ))));
+        // Only a 403 counts.
+        assert!(!is_namespace_terminating(&api_error(
+            409,
+            "Conflict",
+            &["NamespaceTerminating"]
+        )));
+        assert!(!is_namespace_terminating(&api_error(
+            500,
+            "InternalError",
+            &[]
+        )));
+        assert!(!is_namespace_terminating(&kube::Error::TlsRequired));
     }
 
     #[test]
