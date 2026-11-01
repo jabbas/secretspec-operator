@@ -22,6 +22,13 @@ All notable changes are documented here. The format follows
   `unrecognized format "uint16"` on every install. The `minimum`/`maximum`
   bounds are unchanged, so validation is unchanged.
 
+### Changed
+
+- **Docs:** [Operations](docs/operations.md#debugging-inside-the-pod) has a
+  non-interactive `kubectl debug` example (`-i` plus a command), with the
+  harmless `couldn't attach … falling back to streaming logs` message and the
+  advice to pin the busybox image by digest.
+
 ## 0.1.2 - 2026-10-26
 
 ### Added

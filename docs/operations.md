@@ -216,6 +216,26 @@ kubectl -n secretspec-system debug -it <operator-pod> --image=busybox:stable \
   --target=operator --profile=restricted
 ```
 
+For a one-shot look from a script or CI job, run a single command instead of a
+shell: `-i` (no `-t`) plus the command after `--`. The debug container starts,
+runs it and prints its output:
+
+```sh
+kubectl -n secretspec-system debug -i <operator-pod> \
+  --image=busybox:stable@sha256:<digest> \
+  --target=operator --profile=restricted -- ls /proc/1/root/licenses/
+```
+
+`kubectl` may print a message like `couldn't attach … falling back to
+streaming logs` first. It is harmless: `kubectl` could not attach to the
+short-lived container and shows its log instead, so the output still arrives.
+Pin the busybox image **by digest** (look it up
+with, for example, `crane digest busybox:stable`) so that the debug tooling
+cannot change under you; the tag in the interactive example is only a
+convenience. The command runs as user `65532`, the operator's own user, like
+the interactive shell. An ephemeral container cannot be removed; it stays in
+the pod until the pod is replaced.
+
 `--profile=restricted` is needed when the namespace enforces the Pod Security
 Standard `restricted` (the default `general` profile adds `SYS_PTRACE`, which
 the admission rejects). The operator container keeps its read-only root
