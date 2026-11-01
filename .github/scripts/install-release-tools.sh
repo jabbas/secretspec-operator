@@ -54,21 +54,21 @@ for tool in "$@"; do
     syft)
       prefix=SYFT
       version="$SYFT_VERSION"
-      sha="$SYFT_SHA256"
+      checksum="$SYFT_SHA256"
       archive="syft_${version}_linux_amd64.tar.gz"
       url="https://github.com/anchore/syft/releases/download/v${version}/${archive}"
       ;;
     grype)
       prefix=GRYPE
       version="$GRYPE_VERSION"
-      sha="$GRYPE_SHA256"
+      checksum="$GRYPE_SHA256"
       archive="grype_${version}_linux_amd64.tar.gz"
       url="https://github.com/anchore/grype/releases/download/v${version}/${archive}"
       ;;
     crane)
       prefix=CRANE
       version="$CRANE_VERSION"
-      sha="$CRANE_SHA256"
+      checksum="$CRANE_SHA256"
       archive="go-containerregistry_Linux_x86_64.tar.gz"
       url="https://github.com/google/go-containerregistry/releases/download/v${version}/${archive}"
       ;;
@@ -79,7 +79,7 @@ for tool in "$@"; do
   esac
 
   curl -fsSL --retry 3 -o "$temp/$archive" "$url"
-  if ! echo "$sha  $temp/$archive" | sha256sum --check --strict -; then
+  if ! echo "$checksum  $temp/$archive" | sha256sum --check --strict -; then
     echo "::error::$tool $version ($archive) does not match the pinned checksum; update ${prefix}_SHA256 (and ${prefix}_VERSION) together in .github/scripts/install-release-tools.sh, from the checksums file of the upstream release (docs/development.md, \"Pinned tools and Renovate\")" >&2
     exit 1
   fi

@@ -864,7 +864,10 @@ jobs:
           # (the tag, the chart version and the appVersion are identical).
           images="$(helm template secretspec-operator "$package" \
             | yq 'select(.kind == "Deployment") | .spec.template.spec.containers[].image')"
-          echo "rendered image(s): $images"
+          # %q per line: the value is rendered from the package, not trusted.
+          while IFS= read -r image; do
+            printf 'rendered image: %q\n' "$image"
+          done <<<"$images"
           test "$images" = "$IMAGE:$TAG"
       # Promote mode: the chart is packaged again (its version and appVersion
       # are the final ones), but it must be the chart that was tested with the
@@ -911,7 +914,16 @@ jobs:
           fi
           echo "--- recheck.log ---"
           show_log recheck.log
-          helm push "chart/secretspec-operator-${VERSION}.tgz" "$CHART_REPO" 2>&1 | tee push.log
+          # The output may carry registry error text: it goes through show_log,
+          # and the exit status of helm is kept (fail closed), also with the
+          # log printed first.
+          status=0
+          helm push "chart/secretspec-operator-${VERSION}.tgz" "$CHART_REPO" > push.log 2>&1 || status=$?
+          show_log push.log
+          if [[ "$status" -ne 0 ]]; then
+            echo "::error::helm push failed (exit status $status)"
+            exit "$status"
+          fi
           digest="$(awk '/^Digest:/ {print $2}' push.log)"
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
