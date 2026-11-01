@@ -268,9 +268,14 @@ jobs:
   # verify. The tag is set last and only if it is free or already points at the
   # same digest, so no re-run can move it: a re-run that finds the tag resumes
   # with the digest it points to instead of building a new image. Runs only in
-  # mode=build (its `needs` are skipped in promote mode).
+  # mode=build: `build` and `licenses` are skipped in promote mode, and the
+  # explicit condition (rule: "Job graph" in docs/development.md) makes that a
+  # stated skip, not a side effect of the implicit success().
   image:
     needs: [verify, build, licenses] # `build` = both architecture legs
+    if: >-
+      ${{ !cancelled() && needs.verify.result == 'success'
+        && needs.build.result == 'success' && needs.licenses.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -517,6 +522,7 @@ jobs:
   # Runs the pushed image on both architectures (arm64 under QEMU).
   smoke:
     needs: image
+    if: ${{ !cancelled() && needs.image.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -1074,6 +1080,11 @@ jobs:
   # PAT of Environment `helm-charts`, scoped to jabbas/helm-charts. The job is
   # idempotent: re-run it on its own after a failure.
   #
+  # The condition is explicit because `promote` (build mode) or `image` and
+  # `smoke` (promote mode) are skipped upstream, and a skipped job anywhere
+  # in `needs` would skip this one under the implicit success(). It still never
+  # runs after a failure: all three direct dependencies must have succeeded.
+  #
   # Trust: Helm and Flux do not verify signatures for HTTP repositories. The
   # package is tied to the signed OCI chart instead: its SHA-256 must equal
   # the digest of the OCI chart layer (the manifest is signed by `chart`),
@@ -1081,6 +1092,9 @@ jobs:
   # users check the same chain.
   helm-index:
     needs: [verify, chart, release]
+    if: >-
+      ${{ !cancelled() && needs.verify.result == 'success'
+        && needs.chart.result == 'success' && needs.release.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment: helm-charts

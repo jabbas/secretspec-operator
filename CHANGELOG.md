@@ -4,6 +4,17 @@ All notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Until the API leaves
 `v1alpha1`, a breaking change is always listed under its release.
 
+## Unreleased
+
+### Fixed
+
+- The HTTP Helm repository index is updated again for every release (it was
+  skipped since the release-candidate promotion change). `0.1.4-rc.1` is
+  therefore missing from the index; that is fine, it is superseded by
+  `0.1.4-rc.2`. A new check (`release-graph-check.sh`, in the `release-scripts`
+  CI job) fails a pull request when a release job after a mode-dependent job has
+  no explicit `if:`.
+
 ## 0.1.4 - 2026-11-01
 
 ### Changed
