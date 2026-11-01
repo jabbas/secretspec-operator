@@ -6,6 +6,18 @@
 # change what it points to. Everything ambiguous fails: only an explicit
 # "does not exist" answer from the registry counts as absent.
 
+# show_log <file>
+#
+# Prints the output of a registry client (it echoes what the registry said, so
+# it is not trusted) with every line, carriage returns included, prefixed by
+# "| ". The runner treats a line that starts with `::` as a workflow command,
+# so a registry answer could otherwise run one. Prefixing keeps the full text
+# for diagnosis; it is simpler than a summary, which would hide how the
+# registry really answered.
+show_log() {
+  tr '\r' '\n' < "$1" | sed 's/^/| /'
+}
+
 # tag_digest <ref> <strict|lenient>
 #
 # Prints the manifest digest <ref> resolves to, or nothing when it does not
@@ -29,12 +41,12 @@ tag_digest() {
     jq -er '.digest' <<< "$out"
   elif grep -qE 'MANIFEST_UNKNOWN|manifest unknown|: not found' "$err"; then
     echo "lookup of $ref: absent (registry answer follows)" >&2
-    cat "$err" >&2
+    show_log "$err" >&2
   elif [[ "$mode" == lenient ]] && grep -qiE 'NAME_UNKNOWN|name unknown|denied|unauthorized|forbidden' "$err"; then
     echo "lookup of $ref: taken as absent (registry answer follows)" >&2
-    cat "$err" >&2
+    show_log "$err" >&2
   else
-    cat "$err" >&2
+    show_log "$err" >&2
     return 1
   fi
 }
@@ -56,7 +68,7 @@ chart_state() {
   elif grep -qiE 'denied|unauthorized|forbidden' "$log"; then
     CHART_STATE=denied
   else
-    cat "$log" >&2
+    show_log "$log" >&2
     return 1
   fi
 }

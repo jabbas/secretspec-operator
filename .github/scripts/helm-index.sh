@@ -62,7 +62,9 @@ index_entry_digest() {
   digest="$(VERSION="$version" CHART="$CHART_NAME" yq \
     '.entries[strenv(CHART)][] | select(.version == strenv(VERSION)) | .digest // ""' "$index")"
   if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
-    echo "::error::the $CHART_NAME $version entry in $index has no valid digest ('$digest'); fix the index by hand" >&2
+    # %q: the digest is read from an index file fetched or cloned from outside.
+    printf '::error::the %s %s entry in %s has no valid digest (%q); fix the index by hand\n' \
+      "$CHART_NAME" "$version" "$index" "$digest" >&2
     return 1
   fi
   printf '%s\n' "$digest"
@@ -252,7 +254,9 @@ wait_for_pages() {
         return 0
       fi
       if [[ -n "$listed" ]]; then
-        echo "::error::$url lists $CHART_NAME $version with digest $listed, not $digest" >&2
+        # %q: `listed` is read from the served index.
+        printf '::error::%s lists %s %s with digest %q, not %s\n' \
+          "$url" "$CHART_NAME" "$version" "$listed" "$digest" >&2
         rm -f "$body"
         return 2
       fi

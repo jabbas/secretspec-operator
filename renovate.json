@@ -9,7 +9,73 @@
   "timezone": "Europe/Warsaw",
   "prConcurrentLimit": 5,
   "labels": ["dependencies"],
-  "enabledManagers": ["cargo", "github-actions"],
+  "enabledManagers": [
+    "cargo",
+    "github-actions",
+    "pip_requirements",
+    "custom.regex"
+  ],
+  "pip_requirements": {
+    "managerFilePatterns": ["/^\\.github/requirements/[^/]+\\.txt$/"]
+  },
+  "customManagers": [
+    {
+      "description": "Release tool versions, pinned next to a `# renovate: datasource=… depName=…` comment (GitHub release binaries: cosign in release.yml, syft, grype, crane in install-release-tools.sh, yq in install-yq.sh). `extractVersion` strips the `v` of tags whose pin has none. The pinned SHA-256 checksums are NOT updated, see the packageRules. (helm and kind are pinned in `with: version:` of setup-helm / kind-action, which the github-actions manager reads itself.)",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/[^/]+\\.yml$/",
+        "/^\\.github/scripts/[^/]+\\.sh$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\n\\s*[A-Z][A-Z0-9_]*_VERSION[:=] ?(?<currentValue>[^\\s#]+)"
+      ]
+    },
+    {
+      "description": "Cargo tools installed as `tool: name@x.y.z[,…]` by taiki-e/install-action, and by `cargo install --locked` in the docs",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/[^/]+\\.yml$/",
+        "/^docs/development\\.md$/"
+      ],
+      "matchStrings": [
+        "(?:tool:|cargo install --locked) [^\\n]*?(?<depName>cargo-zigbuild)@(?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "(?:tool:|cargo install --locked) [^\\n]*?(?<depName>cargo-auditable)@(?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "(?:tool:|cargo install --locked) [^\\n]*?(?<depName>cargo-deny)@(?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "(?:tool:|cargo install --locked) [^\\n]*?(?<depName>cargo-audit)@(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "datasourceTemplate": "crate"
+    },
+    {
+      "description": "ziglang in the docs (the hash-pinned .github/requirements/ziglang.txt is the pip_requirements manager)",
+      "customType": "regex",
+      "managerFilePatterns": ["/^docs/development\\.md$/"],
+      "matchStrings": [
+        "pip install (?<depName>ziglang)==(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "datasourceTemplate": "pypi"
+    },
+    {
+      "description": "BuildKit image of docker/setup-buildx-action: the version in the comment above the digest-only reference, and the index digest",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.yml$/"],
+      "matchStrings": [
+        "# BuildKit (?<currentValue>v\\d+\\.\\d+\\.\\d+), pinned by index digest\\.\\n\\s*driver-opts: image=(?<depName>moby/buildkit)@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "datasourceTemplate": "docker"
+    },
+    {
+      "description": "kind node images, pinned by tag and index digest (CI matrix and the commands in the docs)",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/[^/]+\\.yml$/",
+        "/^docs/development\\.md$/"
+      ],
+      "matchStrings": [
+        "(?<depName>kindest/node):(?<currentValue>v\\d+\\.\\d+\\.\\d+)@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ],
   "lockFileMaintenance": {
     "enabled": true,
     "schedule": ["before 6am on monday"]
@@ -18,6 +84,11 @@
     {
       "description": "The chart's image reference (tag from appVersion, digest empty) is released by this project, never pinned or bumped by Renovate",
       "matchManagers": ["helm-values", "helmv3"],
+      "enabled": false
+    },
+    {
+      "description": "Runner image (`runs-on: ubuntu-24.04`): changing it is a deliberate decision, never a Renovate pull request",
+      "matchDatasources": ["github-runners"],
       "enabled": false
     },
     {
@@ -49,6 +120,79 @@
       "matchUpdateTypes": ["major"],
       "semanticCommitType": "ci",
       "semanticCommitScope": "deps"
+    },
+    {
+      "description": "No cosign major by Renovate: v3 changes the signature format, and docs/security.md and docs/development.md document the releases as signed with cosign v2 in the legacy format; moving to v3 is a deliberate decision",
+      "matchDepNames": ["sigstore/cosign"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "Release tooling: what builds, scans and signs the release (minor and patch in one PR; majors separately)",
+      "matchDepNames": [
+        "sigstore/cosign",
+        "anchore/syft",
+        "anchore/grype",
+        "google/go-containerregistry",
+        "mikefarah/yq",
+        "cargo-zigbuild",
+        "cargo-auditable",
+        "ziglang",
+        "moby/buildkit"
+      ],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "release tooling",
+      "semanticCommitType": "ci",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "description": "CI tooling: helm and the cargo checks (minor and patch in one PR; majors separately)",
+      "matchDepNames": ["helm", "cargo-deny", "cargo-audit"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "ci tooling",
+      "semanticCommitType": "ci",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "description": "kind and its node images move together, in one PR",
+      "matchDepNames": ["kubernetes-sigs/kind", "kindest/node"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "kind",
+      "semanticCommitType": "ci",
+      "semanticCommitScope": "deps",
+      "prBodyNotes": [
+        "kind node images are published with a kind release: take the node image digests from the release notes of the kind version pinned in this PR (https://github.com/kubernetes-sigs/kind/releases) and compare them with the digests Renovate wrote. If the release has no image for a pinned patch version, do not merge the image update."
+      ]
+    },
+    {
+      "description": "A new Kubernetes minor is a decision about the test matrix (ci.yml, docs/development.md), made by hand; Renovate only moves the patch of a pinned minor. separateMultipleMinor gives every minor its own bucket: without it Renovate picks the highest release (a newer minor), the rule below disables that, and the patch of the pinned minor is never proposed. (Not separateMinorPatch: it would make every patch its own PR.)",
+      "matchDepNames": ["kindest/node"],
+      "separateMultipleMinor": true
+    },
+    {
+      "description": "See the rule above: the newer-minor bucket of kindest/node stays disabled, the patch bucket of the pinned minor stays in the kind group",
+      "matchDepNames": ["kindest/node"],
+      "matchUpdateTypes": ["major", "minor"],
+      "enabled": false
+    },
+    {
+      "description": "Pinned tool binaries whose SHA-256 is pinned next to the version: Renovate cannot recompute the checksum",
+      "matchDepNames": [
+        "anchore/syft",
+        "anchore/grype",
+        "google/go-containerregistry",
+        "mikefarah/yq"
+      ],
+      "prBodyNotes": [
+        "**Update the matching SHA-256 in this PR before merging**: `SYFT_SHA256` / `GRYPE_SHA256` / `CRANE_SHA256` in `.github/scripts/install-release-tools.sh`, `YQ_SHA256` in `.github/scripts/install-yq.sh`. Take it from the checksums file of the new upstream release (the `linux_amd64` / `Linux_x86_64` archive; see docs/development.md, \"Pinned tools and Renovate\"). A version bump without it fails closed (`sha256sum --check`): the `release-pins` and `release-scripts` CI jobs of this PR fail with the variable named."
+      ]
+    },
+    {
+      "description": "BuildKit: digest of the image index",
+      "matchDepNames": ["moby/buildkit"],
+      "prBodyNotes": [
+        "The BuildKit reference is pinned by the digest of the image index (`docker/setup-buildx-action` `driver-opts`), in `ci.yml` and `release.yml`; both must be updated together, with the version in the comment above them."
+      ]
     }
   ]
 }

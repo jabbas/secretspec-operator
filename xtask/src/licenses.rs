@@ -381,7 +381,19 @@ fn satisfied(expression: &str, has: &dyn Fn(&Hints) -> bool) -> Result<bool, Str
             let hints = hints(&token)
                 .ok_or_else(|| format!("unrecognised licence identifier `{token}`"))?;
             if self.peek() == Some("WITH") {
-                self.pos += 2; // WITH <exception>
+                // `WITH <exception>`: the exception is ignored, but it must
+                // be there and must not be an operator or a parenthesis.
+                self.pos += 1;
+                match self.peek() {
+                    Some(exception) if !matches!(exception, "(" | ")" | "AND" | "OR" | "WITH") => {
+                        self.pos += 1;
+                    }
+                    _ => {
+                        return Err(format!(
+                            "`WITH` after `{token}` needs an exception identifier"
+                        ));
+                    }
+                }
             }
             Ok((self.has)(&hints))
         }
@@ -843,6 +855,22 @@ mod tests {
         assert!(satisfied("(MIT", &only_mit).is_err());
         assert!(satisfied("MIT OR", &only_mit).is_err());
         assert!(satisfied("", &only_mit).is_err());
+    }
+
+    #[test]
+    fn with_needs_an_exception_and_never_panics() {
+        let only_mit = |h: &Hints| h.names.contains(&"mit");
+        // `WITH` at the end of the expression, or alone: a parse error, not
+        // an out-of-bounds index.
+        assert!(satisfied("MIT WITH", &only_mit).is_err());
+        assert!(satisfied("WITH", &only_mit).is_err());
+        assert!(satisfied("(MIT WITH)", &only_mit).is_err());
+        // An operator or a parenthesis is not an exception.
+        assert!(satisfied("MIT WITH OR Apache-2.0", &only_mit).is_err());
+        assert!(satisfied("MIT WITH AND Apache-2.0", &only_mit).is_err());
+        assert!(satisfied("MIT WITH WITH", &only_mit).is_err());
+        // A complete `WITH` still parses.
+        assert_eq!(satisfied("MIT WITH Foo-exception", &only_mit), Ok(true));
     }
 
     #[test]

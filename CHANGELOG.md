@@ -23,6 +23,19 @@ All notable changes are documented here. The format follows
 - **Images are labelled with the base version.** `org.opencontainers.image.version`
   is `X.Y.Z` for release candidates too (it was `X.Y.Z-rc.N`), so a promoted
   image is consistent.
+- **Renovate tracks the release and CI tool pins** (cosign, syft, grype, crane,
+  yq, helm, kind and its node images, the cargo tools, ziglang, BuildKit). A
+  version bump without its pinned SHA-256 now fails in the pull request (the
+  new `release-pins` CI job), with an error that names the variable to update.
+  Renovate never proposes a runner image change or a cosign major.
+- **Release error messages escape registry data.** Values read from the
+  registry or the GitHub API (image labels and annotations, tag digests, helm
+  output) can no longer inject a workflow command into the run log.
+- **The licence bundle tool no longer panics on a malformed SPDX expression.**
+  `cargo xtask licenses` reports a parse error for an expression that ends in
+  `WITH` instead of crashing.
+- Documentation fixes: the lease RBAC in the design (§9), the 0.1.3 home-lab
+  report.
 
 ## 0.1.3 - 2026-11-01
 
