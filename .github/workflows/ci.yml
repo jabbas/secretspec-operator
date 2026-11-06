@@ -87,7 +87,7 @@ jobs:
           cache-save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
-          version: v3.22.1
+          version: v4.3.1
       - run: cargo xtask chart-test
 
   # Tests the scripts of the release workflow: the index update of its
@@ -106,7 +106,7 @@ jobs:
           persist-credentials: false
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
-          version: v3.22.1
+          version: v4.3.1
       # yq is pinned (checksum verified); jq and python3 are the runner
       # image's (the tests only read JSON with jq and serve a local file).
       - run: bash .github/scripts/install-yq.sh
@@ -269,7 +269,7 @@ jobs:
             -f build/Containerfile -t "$SECRETSPEC_E2E_IMAGE" .
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
-          version: v3.22.1
+          version: v4.3.1
       - uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
         with:
           version: v0.33.0
