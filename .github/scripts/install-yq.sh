@@ -12,7 +12,7 @@
 set -euo pipefail
 
 # renovate: datasource=github-releases depName=mikefarah/yq
-YQ_VERSION=v4.54.1
+YQ_VERSION=v4.54.2
 YQ_SHA256=e68a456f90c577af3fe4960184b3a3cf5c461e0348407c10f107da3a5fec8972
 
 archive="yq_linux_amd64.tar.gz"
