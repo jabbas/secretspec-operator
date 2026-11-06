@@ -107,6 +107,27 @@
       "semanticCommitScope": "deps"
     },
     {
+      "description": "kube and k8s-openapi move together, in one PR for every update type (a kube major needs the matching k8s-openapi). Placed after the cargo rules above so its groupName wins; separateMajorMinor false keeps the kube major in the same group branch instead of a separate `major-kube` one. The workspace pins a k8s-openapi Kubernetes feature (`v1_34`): review it in the PR, Renovate does not change it",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["kube", "kube-*", "k8s-openapi"],
+      "groupName": "kube",
+      "separateMajorMinor": false,
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "description": "rand_core stays on 0.6: tied to ssh-key 0.6 (the version ssh-key 0.6.x uses; the generators take its `CryptoRngCore`, see Cargo.toml). Lift together with ssh-key 0.7, which is also when the RUSTSEC-2026-0387 ignore goes away",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["rand_core"],
+      "allowedVersions": "<0.7"
+    },
+    {
+      "description": "rand_chacha stays on 0.3: tied to ssh-key 0.6, the same stack as rand_core 0.6 (rule above). Lift together with ssh-key 0.7, which is also when the RUSTSEC-2026-0387 ignore goes away",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["rand_chacha"],
+      "allowedVersions": "<0.4"
+    },
+    {
       "description": "GitHub Actions: group minor and patch updates (SHA pins and the version comments are kept)",
       "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
