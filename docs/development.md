@@ -198,9 +198,9 @@ One-time setup (user-level; versions used by CI and last verified locally):
 
 ```sh
 rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
-cargo install --locked cargo-zigbuild@0.23.4 cargo-auditable@0.7.7
+cargo install --locked cargo-zigbuild@0.24.0 cargo-auditable@0.7.7
 python3 -m venv ~/.local/share/zig-venv
-~/.local/share/zig-venv/bin/pip install ziglang==0.17.0   # CI: --require-hashes -r .github/requirements/ziglang.txt
+~/.local/share/zig-venv/bin/pip install ziglang==0.17.1   # CI: --require-hashes -r .github/requirements/ziglang.txt
 export PATH="$HOME/.local/share/zig-venv/bin:$PATH"   # cargo-zigbuild finds `python3 -m ziglang`
 ```
 
