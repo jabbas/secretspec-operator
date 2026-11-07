@@ -23,12 +23,12 @@
 set -euo pipefail
 
 # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
-SYFT_VERSION=1.55.0
-SYFT_SHA256=bb65249542db5fedeeb4d3f9b018b75e7264dbfbbb10486f044581a92f90490d
+SYFT_VERSION=1.57.0
+SYFT_SHA256=9c077a7d43029b3b13e98a8db720661e700c4d58db6352153a06395ae4a2a704
 
 # renovate: datasource=github-releases depName=anchore/grype extractVersion=^v(?<version>.+)$
-GRYPE_VERSION=0.121.0
-GRYPE_SHA256=64e07133d3486115de647a66581461dccf5c732748a0a3119077395565f15519
+GRYPE_VERSION=0.121.2
+GRYPE_SHA256=9c8965ced9df657e5e851c14021bae838802f711edd7a48f9bc3c923a8d28f12
 
 # renovate: datasource=github-releases depName=google/go-containerregistry extractVersion=^v(?<version>.+)$
 CRANE_VERSION=0.22.1
