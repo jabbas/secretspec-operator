@@ -32,9 +32,18 @@ allow = [
     "ISC",
     "Unicode-3.0",
     "Zlib",
-    "CC0-1.0",
     # Root certificates via kube-client rustls (webpki-root-certs: Mozilla root-certificate data).
     "CDLA-Permissive-2.0",
+]
+# A crate-scoped exception, not a global allowance: only this one crate may use
+# the license, so a new dependency under it still fails the check and gets a
+# deliberate decision.
+exceptions = [
+    # ar_archive_writer is a build dependency of psm (psm -> stacker/pest_stack_guard
+    # -> pest -> jsonpath-rust -> kube-client). The LLVM exception only relaxes the
+    # Apache-2.0 attribution duty for compiled output, so it is compatible with
+    # Apache-2.0, which this project allows.
+    { crate = "ar_archive_writer", allow = ["Apache-2.0 WITH LLVM-exception"] },
 ]
 
 [bans]
