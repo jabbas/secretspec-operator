@@ -37,9 +37,10 @@ always installs the image of the same release.
 ## Requirements
 
 - Kubernetes **1.34 or newer**. CI tests 1.34 and 1.37.
-- Helm with OCI support (3.8 or newer) for the OCI channel; any Helm 3 for the
-  HTTP repository. Helm 4 works too; see
-  [Helm 4 and field conflicts](#helm-4-and-field-conflicts).
+- Helm 4. The chart is tested with Helm 4 only (CI uses v4.3.1); see
+  [Helm 4 and field conflicts](#helm-4-and-field-conflicts). Helm 3 (3.8 or
+  newer for the OCI channel, any Helm 3 for the HTTP repository) should work,
+  but it is not tested.
 - Optional: [`cosign`](https://docs.sigstore.dev/cosign/) to verify the release.
   Verifying the HTTP package also needs `crane` (or `oras`), `jq` and `yq`
   ([mikefarah/yq](https://github.com/mikefarah/yq)).
@@ -516,7 +517,7 @@ helm upgrade secretspec-operator \
 Check what changed first (`kubectl get crd secretspecs.secretspec.jabbas.eu
 --show-managed-fields -o yaml`): forcing overwrites the other manager's values
 for the fields the chart sets. Helm 3 uses client-side apply and does not have
-this failure mode.
+this failure mode, but the chart is not tested with Helm 3.
 
 ## Upgrade
 
