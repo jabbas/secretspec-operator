@@ -4,7 +4,7 @@ All notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Until the API leaves
 `v1alpha1`, a breaking change is always listed under its release.
 
-## Unreleased
+## 0.1.5 - 2026-11-08
 
 ### Fixed
 
@@ -14,6 +14,29 @@ All notable changes are documented here. The format follows
   `0.1.4-rc.2`. A new check (`release-graph-check.sh`, in the `release-scripts`
   CI job) fails a pull request when a release job after a mode-dependent job has
   no explicit `if:`.
+
+### Changed
+
+- **Dependencies: kube 4 → 5 and k8s-openapi 0.28 → 0.29.** The operator code
+  needed no change and behaviour is the same. The minimum supported Kubernetes
+  version stays **1.34**: the workspace still selects the `v1_34` feature of
+  k8s-openapi, which 0.29 keeps (it now covers 1.33 to 1.37; 0.28 covered 1.32
+  to 1.36). The minimum Rust version stays 1.89. Renovate now updates `kube` and
+  `k8s-openapi` together in one pull request.
+- **Cargo dependencies refreshed** (minor and patch updates and a lock file
+  maintenance). `cargo deny` allows the `Apache-2.0 WITH LLVM-exception` licence
+  for the build-time crate `ar_archive_writer` only, and no longer allows
+  `CC0-1.0`, which no dependency uses any more.
+- **The chart is tested and packaged with Helm 4** (v4.3.1; CI and the release
+  workflow used Helm 3.22.1 before). Helm 3 (3.8 or newer for OCI) should still
+  work, but it is no longer tested. [Installation](docs/installation.md#requirements)
+  now says so.
+- **Release tooling updated:** syft 1.57.0, grype 0.121.2, yq 4.54.2,
+  cargo-zigbuild 0.24.0, ziglang 0.17.1, BuildKit 0.34.2, cosign-installer 4.1.3,
+  and the GitHub Actions of the workflows; every pinned tool keeps its SHA-256.
+  `rand_core` and `rand_chacha` are held on their current minor versions until
+  `ssh-key` 0.7.
+- Documentation: the examples name 0.1.5; the 0.1.4 home-lab test report.
 
 ## 0.1.4 - 2026-11-01
 
