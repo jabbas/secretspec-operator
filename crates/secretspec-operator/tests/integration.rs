@@ -429,10 +429,14 @@ async fn namespace_mode_ignores_other_namespaces() {
         assert!(env.event_reasons(&ns_b, name, None).await.is_empty());
         assert!(reconciled_lines(mark, &ns_b, name).is_empty());
 
+        // A bare "403" matches timestamps, namespace ids and durations. Every
+        // API rejection is logged as "<code> <reason>" (`kube_error_summary`,
+        // `watcher_error_summary`), so a real 403 always says "Forbidden".
         let logs = logs_since(mark);
-        for needle in ["403", "Forbidden"] {
-            assert!(!logs.contains(needle), "operator logged {needle}:\n{logs}");
-        }
+        assert!(
+            !logs.to_ascii_lowercase().contains("forbidden"),
+            "operator logged a Forbidden error:\n{logs}"
+        );
         operator.stop().await.unwrap();
     })
     .await;
